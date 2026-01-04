@@ -64,9 +64,9 @@ export async function translateText(origin: string, context: string = document.t
           )
         ]) as string;
 
-        // 如果翻译结果为空或与原文完全相同，直接返回原文
+        // 如果翻译结果为空或与原文完全相同，直接返回空
         if (!result || result === origin) {
-          return origin;
+          return '';
         }
 
         // 缓存翻译结果
