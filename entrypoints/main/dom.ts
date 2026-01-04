@@ -5,14 +5,14 @@ import { handleBtnTranslation } from "@/entrypoints/main/trans";
 // 直接翻译的标签集合（块级元素）
 const directSet = new Set([
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6',  // 标题
-    'p', 'li', 'dd', 'blockquote',       // 段落和列表
-    'figcaption'                         // 图片说明
+    'p', 'blockquote',       // 段落和列表
 ]);
 
 // 需要跳过的标签
 const skipSet = new Set([
     'html', 'body', 'script', 'style', 'noscript', 'iframe',
-    'input', 'textarea', 'select', 'button', 'code', 'pre',
+    'input', 'textarea', 'select', 'button', 'code', 'pre', 'figcaption',
+    'li', 'ul', 'ol', 'dl', 'dt', 'dd', // 列表
 ]);
 
 // 内联元素集合（可以包含在其他元素内的元素）
@@ -163,37 +163,126 @@ function shouldSkipNode(node: any, tag: string): boolean {
     // 3. 判断节点是否可编辑
     // 4. 判断文本是否过长
     // 5. 判断文本是否为纯数字或标准数字格式（仅当节点内容几乎全是数字时才跳过）
+    // 6. 判断是否为短文本节点（跳过三个单词以内的翻译）
     return skipSet.has(tag) ||
         node.classList?.contains('notranslate') ||
         node.isContentEditable ||
         checkTextSize(node) ||
-        isMainlyNumericContent(node);
+        isMainlyNumericContent(node) ||
+        isShortTextNode(node);
+}
+
+// 检查节点是否为短文本（三个单词以内）
+function isShortTextNode(node: any): boolean {
+    if (!node || !node.textContent) return false;
+
+    const text = node.textContent.trim();
+    if (!text) return false;
+
+    // 短文本的判断标准：
+    // 1. 最多包含三个单词（以空格、制表符、换行符等空白字符分隔）
+    // 2. 对于中文，按字符数判断（三个中文字符以内）
+    // 3. 排除常见的标点符号和特殊字符
+
+    // 去除首尾空白字符
+    const trimmedText = text.trim();
+    
+    // 检查是否为常见的标点符号或特殊字符
+    if (/^[,.!?;:'"()\[\]{}<>@#$%^&*_+=\-|~`]+$/.test(trimmedText)) {
+        return false;
+    }
+
+    // 检查是否主要为数字（已在isMainlyNumericContent中处理）
+    // 这里我们只关心是否包含字母或中文字符
+    const hasLetterOrChinese = /[a-zA-Z一-鿿]/.test(trimmedText);
+    if (!hasLetterOrChinese) {
+        return false;
+    }
+
+    // 分割单词（支持中英文混合）
+    // 对于英文：按空白字符分割
+    // 对于中文：每个字符可以视为一个单词
+    const words = trimmedText.split(/\s+/);
+    let wordCount = 0;
+    
+    for (const word of words) {
+        if (word.length === 0) continue;
+        
+        // 对于中文文本，每个中文字符可以视为一个单词
+        // 但我们将中文字符串作为一个整体单词处理，除非它包含空格分隔
+        const chineseChars = word.match(/[一-鿿]/g);
+        if (chineseChars) {
+            // 中文文本：长度不超过3个字符视为短文本
+            if (chineseChars.length <= 3) {
+                wordCount += 1;
+            } else {
+                // 超过3个中文字符，不算短文本
+                return false;
+            }
+        } else {
+            // 非中文文本：检查是否是有效的单词
+            // 排除纯标点符号的单词
+            if (/^[,.!?;:'"()\[\]{}<>@#$%^&*_+=\-|~`]+$/.test(word)) {
+                continue;
+            }
+            wordCount += 1;
+        }
+        
+        // 如果单词数量超过3个，直接返回false
+        if (wordCount > 3) {
+            return false;
+        }
+    }
+
+    // 检查总单词数是否在1-3个之间
+    if (wordCount >= 1 && wordCount <= 3) {
+        // 额外检查：排除连字符连接的复合词（视为一个单词）
+        // 但如果文本本身就是由多个连字符单词组成，应该不算短文本
+        const hasMultipleHyphenatedWords = /([a-zA-Z]+-[a-zA-Z]+){2,}/.test(trimmedText);
+        if (hasMultipleHyphenatedWords) {
+            return false;
+        }
+        
+        // 排除常见的缩写和特殊格式
+        if (trimmedText.includes('...') || trimmedText.includes('..')) {
+            return false;
+        }
+        
+        // 长度检查：短文本通常不会太长
+        if (trimmedText.length > 100) {
+            return false; // 太长的文本不太可能是短文本
+        }
+        
+        return true;
+    }
+    
+    return false;
 }
 
 // 检查文本长度
 function checkTextSize(node: any): boolean {
     // 1. 若文本内容长度超过 3072
     // 2. 或者 outerHTML 长度超过 4096，都视为过长
-    // 3. 少于3个字符
+    // 3. 少于16个字符
     return node.textContent.length > 3072 ||
         (node.outerHTML && node.outerHTML.length > 4096) ||
-        node.textContent.length < 3;
+        node.textContent.length < 16;
 }
 
 // 检查节点内容是否主要为数字
 function isMainlyNumericContent(node: any): boolean {
     if (!node || !node.textContent) return false;
-    
+
     const text = node.textContent.trim();
     if (!text) return false;
-    
+
     // 如果内容很短，且是纯数字格式，则跳过
     // 对于短文本，直接判断整体是否为数字格式
     if (text.length < 30 && isNumericContent(text)) return true;
-    
+
     // 检查是否为用户名或用户ID格式
     if (isUserIdentifier(text)) return true;
-    
+
     // 对于较长的内容，检查是否主要为数字格式
     // 处理节点可能含有多个文本子节点的情况
     // 这有助于更精确地识别混合内容中的数字部分
@@ -206,14 +295,14 @@ function isMainlyNumericContent(node: any): boolean {
             textNodes.push(nodeText);
         }
     }
-    
+
     // 如果只有一个文本节点且为数字，则跳过翻译
     if (textNodes.length === 1 && isNumericContent(textNodes[0])) return true;
-    
+
     // 如果所有文本节点都是数字，则跳过翻译
     // 这可能是表格中的数字列或者纯数字列表等
     if (textNodes.length > 0 && textNodes.every(t => isNumericContent(t))) return true;
-    
+
     // 否则不跳过，允许翻译
     return false;
 }
@@ -223,25 +312,25 @@ function isMainlyNumericContent(node: any): boolean {
  */
 function isUserIdentifier(text: string): boolean {
     if (!text || typeof text !== 'string') return false;
-    
+
     const trimmedText = text.trim();
-    
+
     // 检查是否为社交媒体用户名格式
     if (/^@\w+/.test(trimmedText)) return true;  // Twitter格式：@username
     if (/^u\/\w+/.test(trimmedText)) return true; // Reddit格式：u/username
-    
+
     // 检查是否为x.com或twitter.com的ID格式
     if (/^id@https?:\/\/(x\.com|twitter\.com)\/[\w-]+\/status\/\d+/.test(trimmedText)) return true;
-    
+
     // 检查是否包含"关注"相关内容
     if (/关注.*\w+/.test(trimmedText) || /Follow.*\w+/.test(trimmedText)) return true;
-    
+
     // 检查是否为纯粹的用户名格式（字母、数字、下划线组合）
     if (/^[A-Za-z0-9_]{1,15}$/.test(trimmedText)) return true;
-    
+
     // 特殊格式：带点击动作的用户名
     if (/点击.*\w+/.test(trimmedText) && trimmedText.length < 50) return true;
-    
+
     return false;
 }
 
@@ -267,51 +356,51 @@ function isUserIdentifier(text: string): boolean {
  */
 function isNumericContent(text: string): boolean {
     if (!text || typeof text !== 'string') return false;
-    
+
     // 去除空白字符
     const trimmedText = text.trim();
     if (!trimmedText) return false;
 
     // 首先检查是否为用户标识符
     if (isUserIdentifier(trimmedText)) return true;
-    
+
     // 如果包含多个单词，则不视为纯数字内容
     if (/\s+/.test(trimmedText.replace(/[\d,.\-%+]/g, ''))) return false;
-    
+
     // 检查是否为纯数字
     if (/^-?\d+$/.test(trimmedText)) return true;
-    
+
     // 检查是否为标准数字格式：带逗号的数字 (例如: 1,234,567)
     if (/^-?(\d{1,3}(,\d{3})+)$/.test(trimmedText)) return true;
-    
+
     // 检查是否为范围数字 (例如: 1-123)
     if (/^\d+\s*[-~]\s*\d+$/.test(trimmedText)) return true;
-    
+
     // 检查是否为小数
     if (/^-?\d+\.\d+$/.test(trimmedText)) return true;
-    
+
     // 检查是否为百分比
     if (/^-?\d+(\.\d+)?%$/.test(trimmedText)) return true;
-    
+
     // 检查是否为科学计数法 (例如: 1.23e+4)
     if (/^-?\d+(\.\d+)?(e[-+]\d+)?$/i.test(trimmedText)) return true;
-    
+
     // 检查是否为带货币符号的金额 (例如: $123.45, €123, ¥123)
     if (/^[$€¥£₹₽₩]?\s*-?\d+(,\d{3})*(\.\d+)?$/.test(trimmedText)) return true;
-    
+
     // 检查是否为日期时间格式 (仅考虑常见的数字日期格式)
     // 匹配 YYYY-MM-DD, YYYY/MM/DD, DD-MM-YYYY, DD/MM/YYYY, MM-DD-YYYY, MM/DD/YYYY
     if (/^(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4}|\d{1,2}[-/]\d{1,2}[-/]\d{1,2})$/.test(trimmedText)) return true;
-    
+
     // 匹配时间格式 HH:MM:SS, HH:MM
     if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(trimmedText)) return true;
-    
+
     // 匹配版本号 (例如: 1.0.0, 2.3.5-beta)
     if (/^\d+(\.\d+){1,3}(-[a-zA-Z0-9]+)?$/.test(trimmedText)) return true;
-    
+
     // 匹配社交媒体的ID格式
     if (/^id@https?:\/\/(x\.com|twitter\.com)\/[\w-]+\/status\/\d+/.test(trimmedText)) return true;
-    
+
     // 匹配常见的数字ID格式
     if (/^ID[:：]?\s*\d+$/.test(trimmedText)) return true;
     if (/^No[\.:]?\s*\d+$/i.test(trimmedText)) return true;
