@@ -6,13 +6,15 @@ import { handleBtnTranslation } from "@/entrypoints/main/trans";
 const directSet = new Set([
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6',  // 标题
     'p', 'blockquote',       // 段落和列表
+    'li', 'ul', 'ol', 'dl', 'dt', 'dd', // 列表
 ]);
 
 // 需要跳过的标签
 const skipSet = new Set([
     'html', 'body', 'script', 'style', 'noscript', 'iframe',
     'input', 'textarea', 'select', 'button', 'code', 'pre', 'figcaption',
-    'li', 'ul', 'ol', 'dl', 'dt', 'dd', // 列表
+    'nav', 'aside', 'button',
+    'header', 'footer'
 ]);
 
 // 内联元素集合（可以包含在其他元素内的元素）
