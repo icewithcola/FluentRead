@@ -5,8 +5,8 @@ import { handleBtnTranslation } from "@/entrypoints/main/trans";
 // 直接翻译的标签集合（块级元素）
 const directSet = new Set([
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6',  // 标题
-    'p', 'blockquote',       // 段落和列表
-    'li', 'ul', 'ol', 'dl', 'dt', 'dd', // 列表
+    'p', 'blockquote',       // 段落和引用
+    'li', 'dt', 'dd', // 列表项（不包含ul/ol/dl容器，避免重复翻译）
 ]);
 
 // 需要跳过的标签
