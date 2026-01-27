@@ -1,4 +1,22 @@
 <template>
+  <!-- 刷新提示 -->
+  <div v-if="showRefreshTip" class="refresh-tip margin-bottom">
+    <el-alert
+      title="配置已更改"
+      type="warning"
+      description="部分配置需要刷新页面才能生效"
+      show-icon
+      :closable="false"
+    >
+      <template #default>
+        <div style="margin-top: 8px">
+          <el-button type="primary" size="small" @click="refreshPage">立即刷新</el-button>
+          <el-button size="small" @click="showRefreshTip = false">稍后刷新</el-button>
+        </div>
+      </template>
+    </el-alert>
+  </div>
+
   <!-- 开关 -->
   <el-row class="margin-bottom margin-left-2em">
     <el-col :span="20" class="lightblue rounded-corner">
@@ -537,9 +555,17 @@ storage.watch('local:config', (newValue: any, oldValue: any) => {
 // 监听菜单栏配置变化
 // 当配置发生改变时,将新的配置序列化为 JSON 字符串并保存到 storage 中
 // deep: true 表示深度监听对象内部属性的变化
-watch(config, (newValue: any, oldValue: any) => {
-  // TODO 监听配置变化，显示刷新提示
+watch(() => JSON.parse(JSON.stringify(config.value)), (newValue: any, oldValue: any) => {
   storage.setItem('local:config', JSON.stringify(newValue));
+  
+  // 检查是否需要显示刷新提示 (比较关键配置是否变化)
+  if (oldValue && oldValue.on !== undefined) { // 确保不是首次加载
+    const needRefreshKeys = ['display', 'style', 'service', 'to', 'maxConcurrentTranslations'];
+    const changed = needRefreshKeys.some(key => newValue[key] !== oldValue[key]);
+    if (changed) {
+      showRefreshTip.value = true;
+    }
+  }
 }, { deep: true });
 
 // 计算属性

@@ -14,15 +14,49 @@ const skipSet = new Set([
     'html', 'body', 'script', 'style', 'noscript', 'iframe',
     'input', 'textarea', 'select', 'button', 'code', 'pre', 'figcaption',
     'nav', 'aside', 'button',
-    'header', 'footer'
+    'header', 'footer', 'audio', 'video', 'canvas', 'svg'
 ]);
 
 // 内联元素集合（可以包含在其他元素内的元素）
 export const inlineSet = new Set([
     'a', 'b', 'strong', 'span', 'em', 'i', 'u', 'small', 'sub', 'sup',
     'font', 'mark', 'cite', 'q', 'abbr', 'time', 'ruby', 'bdi', 'bdo',
-    'img', 'br', 'wbr', 'svg'
+    'img', 'br', 'wbr'
 ]);
+
+const TRANSLATED_ATTR = 'data-fr-translated';
+
+/**
+ * 检查元素是否可见
+ */
+function isVisible(el: Element): boolean {
+    if (!el) return false;
+    
+    // 检查隐藏属性和类
+    if (el.hasAttribute('hidden') || 
+        el.classList.contains('sr-only') || 
+        el.classList.contains('notranslate') ||
+        el.getAttribute('aria-hidden') === 'true') {
+        return false;
+    }
+
+    // 检查是否已经翻译过
+    if (el.hasAttribute(TRANSLATED_ATTR)) {
+        return false;
+    }
+
+    // 启发式检查：如果 offsetParent 为空且不是固定定位，通常是隐藏的
+    if (el instanceof HTMLElement) {
+        if (el.offsetParent === null) {
+            const style = window.getComputedStyle(el);
+            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
 
 // 传入父节点，返回所有需要翻译的 DOM 元素数组
 export function grabAllNode(rootNode: Node): Element[] {
@@ -35,57 +69,45 @@ export function grabAllNode(rootNode: Node): Element[] {
         NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
         {
             acceptNode: (node: Node): number => {
-                if (node instanceof Text) return NodeFilter.FILTER_ACCEPT;
+                if (node instanceof Text) {
+                    return node.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+                }
 
                 if (!(node instanceof Element)) return NodeFilter.FILTER_SKIP;
 
                 const tag = node.tagName.toLowerCase();
 
-                // 跳过黑名单标签
-                if (skipSet.has(tag) ||
-                    node.classList?.contains('sr-only') ||
-                    node.classList?.contains('notranslate')) {
+                // 跳过不需要翻译的标签或不可见元素
+                if (skipSet.has(tag) || !isVisible(node)) {
                     return NodeFilter.FILTER_REJECT;
                 }
 
-                // 在初始全局翻译时 跳过header与footer
-                if (tag === 'header' || tag === 'footer') {
-                    return NodeFilter.FILTER_REJECT;
-                }
-
-                // 检查是否只包含有效文本内容
-                let hasText = false;
-                let hasElement = false;
+                // 检查是否包含子元素
                 let hasNonEmptyElement = false;
+                let hasText = false;
 
                 for (const child of node.childNodes) {
                     if (child.nodeType === Node.ELEMENT_NODE) {
-                        hasElement = true;
-                        // 检查子元素是否包含文本
-                        if (child.textContent?.trim()) {
+                        if ((child as Element).textContent?.trim()) {
                             hasNonEmptyElement = true;
+                            break;
                         }
-                    }
-                    if (child.nodeType === Node.TEXT_NODE && child.textContent?.trim()) {
+                    } else if (child.nodeType === Node.TEXT_NODE && child.textContent?.trim()) {
                         hasText = true;
                     }
                 }
 
-                // 如果有非空子元素，跳过当前节点
+                // 如果有非空子元素，说明当前节点是容器，跳过它继续遍历子节点
                 if (hasNonEmptyElement) {
                     return NodeFilter.FILTER_SKIP;
                 }
 
-                if (hasText && !hasElement) {
+                // 如果有文本且没有元素子节点，或者虽然没有文本但它是我们要直接翻译的标签
+                if (hasText || directSet.has(tag)) {
                     return NodeFilter.FILTER_ACCEPT;
                 }
 
-                // 如果有子元素，继续遍历
-                if (node.childNodes.length > 0) {
-                    return NodeFilter.FILTER_SKIP;
-                }
-
-                return NodeFilter.FILTER_REJECT;
+                return NodeFilter.FILTER_SKIP;
             }
         }
     );
@@ -94,13 +116,23 @@ export function grabAllNode(rootNode: Node): Element[] {
     let currentNode: Node | null;
     while (currentNode = walker.nextNode()) {
         const translateNode = grabNode(currentNode as Element | Text);
-        if (translateNode) {
+        if (translateNode && translateNode instanceof Element) {
             result.push(translateNode);
-            // 跳过已确定要翻译的节点的所有子节点
-            walker.currentNode = currentNode.nextSibling || currentNode;
+            
+            // 重要：为了避免重复翻译，我们需要跳过这个 translateNode 的所有后续节点
+            // 既然已经决定翻译 translateNode，那么它内部的所有内容都已经包含在内了
+            // 我们将 walker 的指针移动到 translateNode 的最后一个子节点，
+            // 这样下一次 walker.nextNode() 就会跳出这个 translateNode
+            let lastDescendant = translateNode as Node;
+            while (lastDescendant.lastChild) {
+                lastDescendant = lastDescendant.lastChild;
+            }
+            walker.currentNode = lastDescendant;
         }
     }
-    return Array.from(new Set(result));;
+    
+    // 最后的去重和过滤
+    return Array.from(new Set(result)).filter(node => node && node.isConnected);
 }
 
 // 返回最终应该翻译的父节点或 false
@@ -110,29 +142,27 @@ export function grabNode(node: any): any {
 
     // 对于 Text 节点，尝试找到其可翻译的父节点
     if (node instanceof Text) {
-        const parentOrSelf = findTranslatableParent(node);
-        if (parentOrSelf && parentOrSelf !== node) {
-            return parentOrSelf;
+        const parent = node.parentNode;
+        if (parent && parent instanceof Element) {
+            return grabNode(parent);
         }
         return false;
     }
 
-    if (!node.tagName) return false;
+    if (!(node instanceof Element)) return false;
 
     const curTag = node.tagName.toLowerCase();
 
-    // 1. 快速过滤：跳过不需要翻译的节点
+    // 1. 快速过滤：跳过不需要翻译的节点或已经翻译过的节点
     if (shouldSkipNode(node, curTag)) return false;
 
     // 2. 特殊适配：根据域名进行特殊处理
     const domainHandler = selectCompatFn[getMainDomain(location.href.split('?')[0])];
     if (domainHandler) {
         const result = domainHandler(node);
-        // 如果返回的是对象且包含skip属性为true，则跳过该节点
         if (result && typeof result === 'object' && 'skip' in result && result.skip === true) {
             return false;
         }
-        // 如果返回值为节点或其他真值，则返回该值作为翻译节点
         if (result) return result;
     }
 
@@ -146,12 +176,22 @@ export function grabNode(node: any): any {
     }
 
     // 5. 内联元素处理：向上查找合适的父节点
+    // 如果当前是内联元素，我们要看它的父节点是否也是可翻译的（比如 p 标签包裹 span）
     if (isInlineElement(node, curTag)) {
-        return findTranslatableParent(node);
+        const parent = node.parentNode;
+        if (parent && parent instanceof Element) {
+            const translatableParent = grabNode(parent);
+            if (translatableParent) return translatableParent;
+        }
+        return node;
     }
 
     // 6. 首行文本处理：处理 div 和 label 的首行文本
     if (curTag === 'div' || curTag === 'label') {
+        // 如果 div 只有文本节点而没有元素子节点，也可以直接翻译
+        if (detectChildMeta(node) && node.textContent?.trim()) {
+            return node;
+        }
         return handleFirstLineText(node);
     }
 
@@ -160,15 +200,13 @@ export function grabNode(node: any): any {
 
 // 检查是否应该跳过节点
 function shouldSkipNode(node: any, tag: string): boolean {
-    // 1. 判断标签是否在 skipSet 内
-    // 2. 检查是否具有 notranslate 类
-    // 3. 判断节点是否可编辑
-    // 4. 判断文本是否过长
-    // 5. 判断文本是否为纯数字或标准数字格式（仅当节点内容几乎全是数字时才跳过）
-    // 6. 判断是否为短文本节点（跳过三个单词以内的翻译）
+    if (!node || !(node instanceof Element)) return true;
+    
     return skipSet.has(tag) ||
+        node.hasAttribute(TRANSLATED_ATTR) ||
         node.classList?.contains('notranslate') ||
         node.isContentEditable ||
+        !isVisible(node) ||
         checkTextSize(node) ||
         isMainlyNumericContent(node) ||
         isShortTextNode(node);
@@ -487,15 +525,25 @@ export function LLMStandardHTML(node: any) {
     // 1. 初始化空字符串 text
     // 2. 遍历子节点
     // 3. 若为文本节点，拼接其文本内容
-    // 4. 若为元素节点且在 inlineSet 中，拼接其 outerHTML
+    // 4. 若为元素节点且在 inlineSet 中，拼接其 outerHTML（移除不可见内容）
     // 5. 否则继续递归处理子节点
     let text = "";
     node.childNodes.forEach((child: any) => {
         if (child.nodeType === Node.TEXT_NODE) {
             text += child.nodeValue;
         } else if (child.nodeType === Node.ELEMENT_NODE) {
-            if (inlineSet.has(child.tagName.toLowerCase())) {
-                text += child.outerHTML;
+            const tag = child.tagName.toLowerCase();
+            if (inlineSet.has(tag)) {
+                if (tag === 'img' || tag === 'br' || tag === 'wbr') {
+                    // 对于这些标签，我们只保留基本结构，移除可能引起多余翻译的属性
+                    const clone = child.cloneNode(false) as Element;
+                    clone.removeAttribute('alt');
+                    clone.removeAttribute('title');
+                    clone.removeAttribute('aria-label');
+                    text += clone.outerHTML;
+                } else {
+                    text += child.outerHTML;
+                }
             } else {
                 text += LLMStandardHTML(child);
             }

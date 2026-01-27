@@ -274,7 +274,7 @@ function bilingualTranslate(node: any, nodeOuterHTML: any) {
 export function singleTranslate(node: any) {
     if (detectlang(node.textContent.replace(/[\s\u3000]/g, '')) === config.to) return;
 
-    let origin = servicesType.isMachine(config.service) ? node.innerHTML : LLMStandardHTML(node);
+    let origin = LLMStandardHTML(node);
     let spinner = insertLoadingSpinner(node);
     
     // 使用队列管理的翻译API
