@@ -1,59 +1,115 @@
 :root {
-    font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     line-height: 1.5;
     font-weight: 400;
-    /* 颜色与主题交由 styles/theme.css 控制 */
-    color: var(--fr-text-color);
+    
+    /* Theme Colors */
+    --fr-primary-color: #409eff;
+    --fr-bg-color: #f5f7fa;
+    --fr-card-bg: #ffffff;
+    --fr-text-color: #2c3e50;
+    --fr-text-secondary: #606266;
+    --fr-border-color: #e4e7ed;
+    --fr-border-radius: 12px;
+    --fr-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+    
+    /* Dark Mode Overrides (handled by .dark class usually, but setting defaults) */
+    color-scheme: light dark;
+}
+
+html.dark {
+    --fr-bg-color: #1a1a1a;
+    --fr-card-bg: #252525;
+    --fr-text-color: #e5eaf3;
+    --fr-text-secondary: #a3a6ad;
+    --fr-border-color: #4c4d4f;
+    --fr-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+body {
+    margin: 0;
+    padding: 0;
     background-color: var(--fr-bg-color);
-    font-synthesis: none;
-    text-rendering: optimizeLegibility;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    -webkit-text-size-adjust: 100%;
-}
-
-/* 标题样式 */
-.title {
-    font-size: 1.5em;
-    font-weight: 600;
-    margin: 1em 0;
     color: var(--fr-text-color);
-}
-
-.rounded-corner {
-    border-radius: 5px;
-}
-
-/*popup选项框文字*/
-.popup-text {
-    font-size: 15px;
-    font-weight: 500;
-}
-
-.popup-vertical-left {
-    display: flex;
-    align-items: center;
-    justify-content: left;
-    height: 100%;
-}
-
-.margin-left-2em {
-    margin-left: 2em;
-}
-
-.margin-bottom {
-    margin-bottom: 10px;
-}
-
-.custom-padding {
-    padding: 10px !important;
+    transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 #app {
-    min-width: 340px;
+    width: 360px;
     margin: 0 auto;
-    padding: 0;
-    text-align: center;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
 }
 
-/* 由 .dark 类与变量控制主题，这里不再强制全局颜色 */
+/* Common Utilities */
+.card {
+    background: var(--fr-card-bg);
+    border-radius: var(--fr-border-radius);
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: var(--fr-shadow);
+    transition: all 0.3s ease;
+}
+
+.setting-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.setting-item:last-child {
+    margin-bottom: 0;
+}
+
+.setting-label {
+    display: flex;
+    align-items: center;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--fr-text-color);
+}
+
+.setting-label .el-icon {
+    margin-right: 8px;
+    font-size: 16px;
+    color: var(--fr-text-secondary);
+}
+
+.setting-control {
+    flex: 1;
+    display: flex;
+    justify-content: flex-end;
+    margin-left: 12px;
+}
+
+/* Element Plus Overrides for tighter, cleaner look */
+.el-select, .el-input, .el-input-number {
+    width: 100%;
+    max-width: 180px; /* Limit width in list view */
+}
+
+.el-switch {
+    --el-switch-on-color: var(--fr-primary-color);
+}
+
+.popup-text {
+    font-size: 14px;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 3px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+html.dark ::-webkit-scrollbar-thumb {
+    background: #555;
+}

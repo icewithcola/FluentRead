@@ -2,7 +2,7 @@ import {createApp} from 'vue';
 import './style.css';
 import App from './App.vue';
 import 'element-plus/dist/index.css'
-import { ChatDotRound, Setting, Refresh, Edit, Upload, Download, Star, Loading, Coffee, WarningFilled, Warning, CircleCheckFilled } from '@element-plus/icons-vue'
+import { ChatDotRound, Setting, Refresh, Edit, Upload, Download, Star, Loading, Coffee, WarningFilled, Warning, CircleCheckFilled, SwitchButton, InfoFilled } from '@element-plus/icons-vue'
 
 import {
   ElRow,
@@ -27,7 +27,8 @@ import {
   ElButton,
   ElDialog,
   ElDivider,
-  ElInputNumber
+  ElInputNumber,
+  ElAlert
 } from 'element-plus'
 
 const app = createApp(App);
@@ -55,7 +56,8 @@ const components = [
   ElButton,
   ElDialog,
   ElDivider,
-  ElInputNumber
+  ElInputNumber,
+  ElAlert
 ]
 
 components.forEach(component => {
@@ -77,5 +79,7 @@ app.component('Coffee', Coffee)
 app.component('WarningFilled', WarningFilled)
 app.component('Warning', Warning)
 app.component('CircleCheckFilled', CircleCheckFilled)
+app.component('SwitchButton', SwitchButton)
+app.component('InfoFilled', InfoFilled)
 
 app.mount('#app');

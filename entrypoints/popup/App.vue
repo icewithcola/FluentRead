@@ -1,13 +1,13 @@
 <template>
-  <div>
+  <div class="popup-container">
     <el-container>
-      <el-header class="custom-padding">
+      <el-header class="no-padding" height="auto">
         <Header/>
       </el-header>
-      <el-main class="custom-padding" style="min-height: 320px">
+      <el-main class="main-content">
         <Main/>
       </el-main>
-      <el-footer class="custom-padding">
+      <el-footer class="no-padding" height="auto">
         <Footer/>
       </el-footer>
     </el-container>
@@ -26,39 +26,33 @@ import 'element-plus/theme-chalk/dark/css-vars.css';
 </script>
 
 <style scoped>
-@media screen and (max-height: 800px) {
-  .popup-container {
-    max-height: 90vh;
-  }
+.popup-container {
+  width: 100%;
+  min-height: 100vh;
+  background-color: var(--fr-bg-color);
 }
 
-@media screen and (max-width: 480px) {
-  .popup-container {
-    width: 95vw;
-  }
+.no-padding {
+  padding: 0;
 }
 
+.main-content {
+  padding: 16px;
+  overflow-y: auto;
+  min-height: 400px;
+}
+
+/* Global scrollbar styling for the popup */
 ::-webkit-scrollbar {
   width: 6px;
-  height: 6px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #ddd;
+  background: #ccc;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f5f5f5;
-  border-radius: 3px;
-}
-
-.el-main {
-  min-height: 460px;
-  height: auto;
-}
-
-.custom-padding {
-  padding: 12px 16px;
+  background: transparent;
 }
 </style>

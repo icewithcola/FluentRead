@@ -1,499 +1,372 @@
 <template>
-  <!-- 刷新提示 -->
-  <div v-if="showRefreshTip" class="refresh-tip margin-bottom">
-    <el-alert
-      title="配置已更改"
-      type="warning"
-      description="部分配置需要刷新页面才能生效"
-      show-icon
-      :closable="false"
-    >
-      <template #default>
-        <div style="margin-top: 8px">
-          <el-button type="primary" size="small" @click="refreshPage">立即刷新</el-button>
-          <el-button size="small" @click="showRefreshTip = false">稍后刷新</el-button>
-        </div>
-      </template>
-    </el-alert>
-  </div>
-
-  <!-- 开关 -->
-  <el-row class="margin-bottom margin-left-2em">
-    <el-col :span="20" class="lightblue rounded-corner">
-      <span class="popup-text popup-vertical-left">插件状态</span>
-    </el-col>
-
-    <el-col :span="4" class="flex-end">
-      <el-switch v-model="config.on" inline-prompt active-text="开" inactive-text="关" @change="handlePluginStateChange" />
-    </el-col>
-  </el-row>
-
-  <!-- 占位符 -->
-  <div v-if="!config.on">
-    <el-empty description="插件处于禁用状态" />
-  </div>
-
-  <div v-show="config.on">
-    <!--    翻译模式-->
-    <el-row class="margin-bottom margin-left-2em">
-      <el-col :span="12" class="lightblue rounded-corner">
-        <span class="popup-text popup-vertical-left">翻译模式</span>
-      </el-col>
-      <el-col :span="12">
-        <el-select v-model="config.display" placeholder="请选择翻译模式">
-          <el-option class="select-left" v-for="item in options.display" :key="item.value" :label="item.label"
-            :value="item.value" />
-        </el-select>
-      </el-col>
-    </el-row>
-
-    <!--    译文样式选择器-->
-    <el-row v-show="config.display === 1" class="margin-bottom margin-left-2em">
-      <el-col :span="12" class="lightblue rounded-corner">
-        <el-tooltip class="box-item" effect="dark" content="选择双语模式下译文的显示样式，提供多种美观的效果" placement="top-start"
-          :show-after="500">
-          <span class="popup-text popup-vertical-left">译文样式<el-icon class="icon-margin">
-              <ChatDotRound />
-            </el-icon></span>
-        </el-tooltip>
-      </el-col>
-      <el-col :span="12">
-        <el-select v-model="config.style" placeholder="请选择译文显示样式">
-          <el-option-group v-for="group in styleGroups" :key="group.value" :label="group.label">
-            <el-option v-for="item in group.options" :key="item.value" :label="item.label" :value="item.value"
-              :class="item.class" />
-          </el-option-group>
-        </el-select>
-      </el-col>
-    </el-row>
-
-    <!-- 翻译服务 -->
-    <el-row class="margin-bottom margin-left-2em">
-      <el-col :span="12" class="lightblue rounded-corner">
-        <el-tooltip class="box-item" effect="dark" content="机器翻译：快速稳定，适合日常使用；AI翻译：更自然流畅，需要配置令牌" placement="top-start"
-          :show-after="500">
-          <span class="popup-text popup-vertical-left">翻译服务<el-icon class="icon-margin">
-              <ChatDotRound />
-            </el-icon></span>
-        </el-tooltip>
-      </el-col>
-      <el-col :span="12">
-        <b>
-          <el-select v-model="config.service" placeholder="请选择翻译服务">
-            <el-option class="select-left" v-for="item in compute.filteredServices" :key="item.value"
-              :label="item.label" :value="item.value" :disabled="item.disabled"
-              :class="{ 'select-divider': item.disabled }" />
-          </el-select>
-        </b>
-      </el-col>
-    </el-row>
-
-    <!-- 目标语言 -->
-    <el-row class="margin-bottom margin-left-2em">
-      <el-col :span="12" class="lightblue rounded-corner">
-        <span class="popup-text popup-vertical-left">目标语言</span>
-      </el-col>
-      <el-col :span="12">
-        <el-select v-model="config.to" placeholder="请选择目标语言">
-          <el-option class="select-left" v-for="item in options.to" :key="item.value" :label="item.label"
-            :value="item.value" />
-        </el-select>
-      </el-col>
-    </el-row>
-
-
-
-    <!-- 鼠标悬浮快捷键 -->
-    <el-row class="margin-bottom margin-left-2em" :class="{ 'custom-hotkey-row': config.hotkey === 'custom' }">
-      <el-col :span="14" class="lightblue rounded-corner">
-        <el-tooltip class="box-item" effect="dark" content="按住指定快捷键并悬停在文本上进行翻译" placement="top-start" :show-after="500">
-        <span class="popup-text popup-vertical-left">
-          鼠标悬浮快捷键
-          <el-icon class="icon-margin">
-            <ChatDotRound />
-          </el-icon>
-        </span>
-        </el-tooltip>
-      </el-col>
-      <el-col :span="10" class="flex-end">
-        <div class="hotkey-config">
-          <el-select 
-            v-model="config.hotkey" 
-            placeholder="请选择快捷键" 
-            size="small" 
-            style="width: 100%"
-            @change="handleMouseHotkeyChange"
-          >
-            <el-option v-for="item in options.keys" :key="item.value" :label="item.label" :value="item.value" :disabled="item.disabled" :class="{ 'select-divider': item.disabled }" />
-          </el-select>
-          
-          <!-- 自定义快捷键显示（选择自定义时总是显示） -->
-          <div v-if="config.hotkey === 'custom'" class="custom-hotkey-display">
-            <span class="hotkey-text" v-if="config.customHotkey">
-              {{ getCustomMouseHotkeyDisplayName() }}
-            </span>
-            <span class="hotkey-text placeholder-text" v-else>
-              点击设置自定义快捷键
-            </span>
-            <el-button size="small" type="text" @click="openCustomMouseHotkeyDialog" class="edit-button">
-              <el-icon><Edit /></el-icon>
-            </el-button>
+  <div class="settings-container">
+    <!-- 刷新提示 -->
+    <transition name="el-fade-in">
+      <el-alert
+        v-if="showRefreshTip"
+        title="配置已更改"
+        type="warning"
+        description="部分配置需要刷新页面才能生效"
+        show-icon
+        :closable="false"
+        class="mb-3"
+      >
+        <template #default>
+          <div class="mt-2">
+            <el-button type="primary" size="small" @click="refreshPage">立即刷新</el-button>
+            <el-button size="small" @click="showRefreshTip = false">稍后刷新</el-button>
           </div>
+        </template>
+      </el-alert>
+    </transition>
+
+    <!-- 主开关 -->
+    <div class="card main-switch-card">
+      <div class="setting-item">
+        <div class="setting-label">
+          <el-icon><SwitchButton /></el-icon>
+          <span class="font-bold">启用 Fluent Read</span>
         </div>
-      </el-col>
-    </el-row>
-
-    <!-- 全文翻译快捷键选择 -->
-    <el-row v-if="config.on" class="margin-bottom margin-left-2em margin-top-1em" :class="{ 'custom-hotkey-row': config.floatingBallHotkey === 'custom' }">
-      <el-col :span="14" class="lightblue rounded-corner">
-        <el-tooltip class="box-item" effect="dark" content="（测试版）设置快捷键以便快速切换全文翻译状态，无需鼠标点击悬浮球" placement="top-start" :show-after="500">
-        <span class="popup-text popup-vertical-left">
-          <!-- <span class="new-feature-badge">新</span> -->
-          全文翻译快捷键
-          <el-icon class="icon-margin">
-            <ChatDotRound />
-          </el-icon>
-        </span>
-        </el-tooltip>
-      </el-col>
-      <el-col :span="10" class="flex-end">
-        <div class="hotkey-config">
-          <el-select 
-            v-model="config.floatingBallHotkey" 
-            placeholder="选择快捷键" 
-            size="small" 
-            style="width: 100%"
-            @change="handleHotkeyChange"
-          >
-            <el-option v-for="item in options.floatingBallHotkeys" :key="item.value" :label="item.label" :value="item.value" />
-          </el-select>
-          
-          <!-- 自定义快捷键显示（选择自定义时总是显示） -->
-          <div v-if="config.floatingBallHotkey === 'custom'" class="custom-hotkey-display">
-            <span class="hotkey-text" v-if="config.customFloatingBallHotkey">
-              {{ getCustomHotkeyDisplayName() }}
-            </span>
-            <span class="hotkey-text placeholder-text" v-else>
-              点击设置自定义快捷键
-            </span>
-            <el-button size="small" type="text" @click="openCustomHotkeyDialog" class="edit-button">
-              <el-icon><Edit /></el-icon>
-            </el-button>
-          </div>
+        <div class="setting-control">
+          <el-switch 
+            v-model="config.on" 
+            inline-prompt 
+            active-text="开" 
+            inactive-text="关" 
+            @change="handlePluginStateChange" 
+            size="large"
+          />
         </div>
-      </el-col>
-    </el-row>
+      </div>
+    </div>
 
+    <!-- 禁用状态占位 -->
+    <div v-if="!config.on" class="empty-state">
+      <el-empty description="插件已暂停工作" :image-size="100" />
+    </div>
 
-    <!-- 划词翻译模式选择 -->
-    <el-row v-if="config.on" class="margin-bottom margin-left-2em margin-top-1em">
-      <el-col :span="14" class="lightblue rounded-corner">
-        <el-tooltip class="box-item" effect="dark" content="选中文本后显示红点，鼠标移到红点上查看翻译结果。可选择关闭、双语显示或只显示译文" placement="top-start" :show-after="500">
-      <span class="popup-text popup-vertical-left">
-        <!-- <span class="new-feature-badge">新</span> -->
-        划词翻译
-        <el-icon class="icon-margin">
-          <ChatDotRound />
-        </el-icon>
-      </span>
-        </el-tooltip>
-      </el-col>
-      <el-col :span="10" class="flex-end">
-        <el-select v-model="config.selectionTranslatorMode" placeholder="选择模式" size="small" style="width: 100%">
-          <el-option label="关闭" value="disabled" />
-          <el-option label="双语显示" value="bilingual" />
-          <el-option label="只显示译文" value="translation-only" />
-        </el-select>
-      </el-col>
-    </el-row>
-
-    <!-- token -->
-    <el-row v-show="compute.showToken" class="margin-bottom margin-left-2em">
-      <el-col :span="12" class="lightblue rounded-corner">
-        <el-tooltip class="box-item" effect="dark"
-          content="API访问令牌仅保存在本地，用于访问翻译服务。获取方式请参考对应服务的官方文档；翻译服务为 ollama 时，token 可为任意值" placement="top-start"
-          :show-after="500">
-          <span class="popup-text popup-vertical-left">访问令牌<el-icon class="icon-margin">
-              <ChatDotRound />
-            </el-icon></span>
-        </el-tooltip>
-      </el-col>
-      <el-col :span="12">
-        <el-input v-model="config.token[config.service]" type="password" show-password placeholder="请输入API访问令牌" />
-      </el-col>
-    </el-row>
-
-    <!-- 本地大模型配置 -->
-    <el-row v-show="compute.showCustom" class="margin-bottom margin-left-2em">
-      <el-col :span="12" class="lightblue rounded-corner">
-        <el-tooltip class="box-item" effect="dark" content="目前仅支持OpenAI格式的请求接口，如http://localhost:3000/v1/chat/completions，其中 localhost:11434 可更换为任意值。
-                     ollama 配置请参考：https://fluent.thinkstu.com/guide/faq.html" placement="top-start" :show-after="500">
-          <span class="popup-text popup-vertical-left">自定义接口<el-icon class="icon-margin">
-              <ChatDotRound />
-            </el-icon></span>
-        </el-tooltip>
-      </el-col>
-      <el-col :span="12">
-        <el-input v-model="config.custom" placeholder="请输入自定义接口地址" />
-      </el-col>
-    </el-row>
-
-    <!--  模型 -->
-    <el-row v-show="compute.showModel" class="margin-bottom margin-left-2em">
-      <el-col :span="12" class="lightblue rounded-corner">
-        <span class="popup-text popup-vertical-left">模型</span>
-      </el-col>
-      <el-col :span="12">
-        <el-select v-model="config.model[config.service]" placeholder="请选择模型">
-          <el-option class="select-left" v-for="item in compute.model" :key="item" :label="item" :value="item" />
-        </el-select>
-      </el-col>
-    </el-row>
-
-    <el-row v-show="compute.showCustomModel" class="margin-bottom margin-left-2em">
-      <el-col :span="12" class="lightblue rounded-corner">
-        <el-tooltip class="box-item" effect="dark"
-          :content="config.service === 'doubao' ? '豆包的model为接入点，获取方式见官方文档：https://console.volcengine.com/ark/region:ark+cn-beijing/endpoint' : '注意：自定义模型名称需要与服务商提供的模型名称一致，否则无法使用！'"
-          placement="top-start" :show-after="500">
-          <span class="popup-text popup-vertical-left">{{ config.service === 'doubao' ? '接入点' : '自定义模型' }}<el-icon
-              class="icon-margin">
-              <ChatDotRound />
-            </el-icon></span>
-        </el-tooltip>
-      </el-col>
-      <el-col :span="12">
-        <el-input v-model="config.customModel[config.service]" placeholder="例如：gemma:7b" />
-      </el-col>
-    </el-row>
-
-    <!-- 高级选项-->
-    <el-collapse class="margin-left-2em margin-bottom">
-      <el-collapse-item title="高级选项">
-
-        <!-- 主题设置 -->
-        <el-row class="margin-bottom margin-left-2em margin-top-2em">
-          <el-col :span="12" class="lightblue rounded-corner">
-            <span class="popup-text popup-vertical-left">主题设置</span>
-          </el-col>
-          <el-col :span="12">
-            <el-select v-model="config.theme" placeholder="请选择主题模式">
-              <el-option class="select-left" v-for="item in options.theme" :key="item.value" :label="item.label"
-                         :value="item.value" />
+    <!-- 启用状态下的设置 -->
+    <div v-show="config.on">
+      
+      <!-- 基础设置 -->
+      <div class="card">
+        <div class="card-header">基础设置</div>
+        
+        <!-- 翻译模式 -->
+        <div class="setting-item">
+          <div class="setting-label">翻译模式</div>
+          <div class="setting-control">
+            <el-select v-model="config.display" placeholder="选择模式" size="default">
+              <el-option v-for="item in options.display" :key="item.value" :label="item.label" :value="item.value" />
             </el-select>
-          </el-col>
-        </el-row>
+          </div>
+        </div>
 
-        <!-- 缓存开关 -->
-        <el-row class="margin-bottom margin-left-2em">
-          <el-col :span="20" class="lightblue rounded-corner">
-            <el-tooltip class="box-item" effect="dark" content="开启缓存可以提高翻译速度，减少重复请求，但可能导致翻译结果不是最新的" placement="top-start" :show-after="500">
-        <span class="popup-text popup-vertical-left">缓存翻译结果<el-icon class="icon-margin">
-            <ChatDotRound />
-          </el-icon></span>
+        <!-- 译文样式 (仅双语模式显示) -->
+        <div class="setting-item" v-show="config.display === 1">
+          <div class="setting-label">
+            译文样式
+            <el-tooltip content="选择双语模式下译文的显示样式" placement="top">
+              <el-icon class="ml-1 text-gray-400"><InfoFilled /></el-icon>
             </el-tooltip>
-          </el-col>
+          </div>
+          <div class="setting-control">
+            <el-select v-model="config.style" placeholder="选择样式">
+              <el-option-group v-for="group in styleGroups" :key="group.value" :label="group.label">
+                <el-option v-for="item in group.options" :key="item.value" :label="item.label" :value="item.value" />
+              </el-option-group>
+            </el-select>
+          </div>
+        </div>
 
-          <el-col :span="4" class="flex-end">
-            <el-switch v-model="config.useCache" inline-prompt active-text="启用" inactive-text="禁用"/>
-          </el-col>
-        </el-row>
+        <!-- 目标语言 -->
+        <div class="setting-item">
+          <div class="setting-label">目标语言</div>
+          <div class="setting-control">
+            <el-select v-model="config.to" placeholder="选择语言" filterable>
+              <el-option v-for="item in options.to" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+          </div>
+        </div>
+      </div>
 
-        <!-- 悬浮球开关 -->
-      <el-row v-if="config.on" class="margin-bottom margin-left-2em margin-top-1em">
-        <el-col :span="20" class="lightblue rounded-corner">
-          <el-tooltip class="box-item" effect="dark" content="（测试版）控制是否显示屏幕边缘的即时翻译悬浮球，用于对整个网页进行翻译" placement="top-start" :show-after="500">
-          <span class="popup-text popup-vertical-left">
-            <!-- <span class="new-feature-badge">新</span> -->
-            全文翻译悬浮球
-            <el-icon class="icon-margin">
-              <ChatDotRound />
-            </el-icon>
-          </span>
-          </el-tooltip>
-        </el-col>
-
-        <el-col :span="4" class="flex-end">
-          <el-switch v-model="floatingBallEnabled" inline-prompt active-text="启用" inactive-text="禁用" />
-        </el-col>
-      </el-row>
-
-
-        <!-- 翻译进度面板 -->
-        <el-row class="margin-bottom margin-left-2em">
-          <el-col :span="20" class="lightblue rounded-corner">
-            <el-tooltip class="box-item" effect="dark"
-                        content="翻译进度面板（默认关）：关闭后将不再显示右下角的全文翻译进度面板，适合移动端或希望更少打扰的用户。"
-                        placement="top-start" :show-after="500">
-          <span class="popup-text popup-vertical-left">翻译进度面板<el-icon class="icon-margin">
-              <ChatDotRound />
-            </el-icon></span>
+      <!-- 翻译服务 -->
+      <div class="card">
+        <div class="card-header">翻译服务</div>
+        
+        <!-- 服务选择 -->
+        <div class="setting-item">
+          <div class="setting-label">
+            服务商
+            <el-tooltip content="机器翻译快速稳定；AI翻译自然流畅" placement="top">
+              <el-icon class="ml-1 text-gray-400"><InfoFilled /></el-icon>
             </el-tooltip>
-          </el-col>
-          <el-col :span="4" class="flex-end">
-          <el-switch v-model="config.translationStatus" inline-prompt active-text="启动" inactive-text="禁用" />
-          </el-col>
-        </el-row>
+          </div>
+          <div class="setting-control">
+            <el-select v-model="config.service" placeholder="选择服务">
+              <el-option 
+                v-for="item in compute.filteredServices" 
+                :key="item.value"
+                :label="item.label" 
+                :value="item.value" 
+                :disabled="item.disabled"
+                :class="{ 'select-divider': item.disabled }" 
+              />
+            </el-select>
+          </div>
+        </div>
 
-        <!-- 禁用动画设置 -->
-        <el-row class="margin-bottom margin-left-2em">
-          <el-col :span="20" class="lightblue rounded-corner">
-            <el-tooltip class="box-item" effect="dark"
-                        content="动画效果（默认开）：禁用后将关闭加载/悬浮等动画，以节省GPU资源和电量。适合低配置设备或希望节省资源的用户。"
-                        placement="top-start" :show-after="500">
-              <span class="popup-text popup-vertical-left">动画效果<el-icon class="icon-margin">
-                  <ChatDotRound />
-                </el-icon></span>
-            </el-tooltip>
-          </el-col>
-          <el-col :span="4" class="flex-end">
-            <el-switch v-model="config.animations" inline-prompt active-text="启动" inactive-text="禁用" />
-          </el-col>
-        </el-row>
-
-        <!-- 翻译并发数 -->
-        <el-row class="margin-bottom margin-left-2em">
-          <el-col :span="12" class="lightblue rounded-corner">
-            <el-tooltip class="box-item" effect="dark" content="控制同时进行的最大翻译任务数，数值越高翻译速度越快，但可能占用更多系统资源" placement="top-start"
-                        :show-after="500">
-          <span class="popup-text popup-vertical-left">翻译并发数<el-icon class="icon-margin">
-              <ChatDotRound />
-            </el-icon></span>
-            </el-tooltip>
-          </el-col>
-          <el-col :span="12">
-            <el-input-number
-                v-model="config.maxConcurrentTranslations"
-                :min="1"
-                :max="100"
-                :step="1"
-                style="width: 100%"
-                @change="handleConcurrentChange"
-                controls-position="right"
+        <!-- API Token -->
+        <div class="setting-item" v-show="compute.showToken">
+          <div class="setting-label">访问令牌</div>
+          <div class="setting-control">
+            <el-input 
+              v-model="config.token[config.service]" 
+              type="password" 
+              show-password 
+              placeholder="API Key / Token" 
             />
-          </el-col>
-        </el-row>
+          </div>
+        </div>
 
-        <!-- 使用代理转发 -->
-        <el-row v-show="compute.showProxy" class="margin-bottom margin-left-2em">
-          <el-col :span="8" class="lightblue rounded-corner">
-            <el-tooltip class="box-item" effect="dark" content="使用代理可以解决网络无法访问的问题，如不熟悉代理设置请留空！" placement="top-start"
-                        :show-after="500">
-              <span class="popup-text popup-vertical-left">代理地址<el-icon class="icon-margin">
-                  <ChatDotRound />
-                </el-icon></span>
+        <!-- 自定义接口 -->
+        <div class="setting-item" v-show="compute.showCustom">
+          <div class="setting-label">接口地址</div>
+          <div class="setting-control">
+            <el-input v-model="config.custom" placeholder="http://..." />
+          </div>
+        </div>
+
+        <!-- 模型选择 -->
+        <div class="setting-item" v-show="compute.showModel">
+          <div class="setting-label">模型</div>
+          <div class="setting-control">
+            <el-select v-model="config.model[config.service]" placeholder="选择模型" filterable allow-create default-first-option>
+              <el-option v-for="item in compute.model" :key="item" :label="item" :value="item" />
+            </el-select>
+          </div>
+        </div>
+
+        <!-- 自定义模型名称 -->
+        <div class="setting-item" v-show="compute.showCustomModel">
+          <div class="setting-label">{{ config.service === 'doubao' ? '接入点 ID' : '模型名称' }}</div>
+          <div class="setting-control">
+            <el-input v-model="config.customModel[config.service]" placeholder="输入模型名称" />
+          </div>
+        </div>
+      </div>
+
+      <!-- 交互快捷键 -->
+      <div class="card">
+        <div class="card-header">交互与快捷键</div>
+
+        <!-- 鼠标悬浮快捷键 -->
+        <div class="setting-item">
+          <div class="setting-label">
+            悬浮翻译
+            <el-tooltip content="按住此键并悬停在文本上进行翻译" placement="top">
+              <el-icon class="ml-1 text-gray-400"><InfoFilled /></el-icon>
             </el-tooltip>
-          </el-col>
-          <el-col :span="16">
-            <el-input v-model="config.proxy[config.service]" placeholder="默认不使用代理" />
-          </el-col>
-        </el-row>
-
-        <!-- 角色和模板 -->
-        <el-row v-show="compute.showModel" class="margin-bottom margin-left-2em">
-          <el-col :span="8" class="lightblue rounded-corner">
-            <el-tooltip class="box-item" effect="dark" content="以系统身份 system 发送的对话，常用于指定 AI 要扮演的角色"
-              placement="top-start" :show-after="500">
-              <span class="popup-text popup-vertical-left">system<el-icon class="icon-margin">
-                  <ChatDotRound />
-                </el-icon></span>
-            </el-tooltip>
-          </el-col>
-          <el-col :span="16">
-            <el-input type="textarea" v-model="config.system_role[config.service]" maxlength="8192"
-              placeholder="system message " />
-          </el-col>
-        </el-row>
-        <el-row v-show="compute.showModel" class="margin-bottom margin-left-2em">
-          <el-col :span="8" class="lightblue rounded-corner">
-            <el-tooltip class="box-item" effect="dark"
-              content="以用户身份 user 发送的对话，其中{{to}}表示目标语言，{{origin}}表示待翻译的文本内容，两者不可缺少。"
-              placement="top-start" :show-after="500">
-              <span class="popup-text popup-vertical-left">user<el-icon class="icon-margin">
-                  <ChatDotRound />
-                </el-icon></span>
-            </el-tooltip>
-          </el-col>
-          <el-col :span="16">
-            <el-input type="textarea" v-model="config.user_role[config.service]" maxlength="8192"
-              placeholder="user message template" />
-          </el-col>
-        </el-row>
-        <!-- 恢夏默认模板按钮 -->
-        <el-row v-show="compute.showModel" class="margin-bottom margin-left-2em">
-          <el-col :span="24" style="text-align: right;">
-            <el-button type="primary" link @click="resetTemplate">
-              <el-icon>
-                <Refresh />
-              </el-icon>
-              恢复默认模板
-            </el-button>
-          </el-col>
-        </el-row>
-
-        <!-- 配置导入导出 -->
-        <el-row class="margin-bottom margin-left-2em">
-          <el-col :span="24">
-            <el-divider content-position="center">配置管理</el-divider>
-          </el-col>
-        </el-row>
-        <el-row class="margin-bottom margin-left-2em">
-          <el-col :span="12">
-            <el-button type="primary" @click="handleExport">
-              <el-icon>
-                <Download />
-              </el-icon>
-              导出配置
-            </el-button>
-          </el-col>
-          <el-col :span="12">
-            <el-button type="success" @click="handleImport">
-              <el-icon>
-                <Upload />
-              </el-icon>
-              导入配置
-            </el-button>
-          </el-col>
-        </el-row>
-
-        <!-- 导出配置 -->
-        <el-row v-if="showExportBox" class="margin-bottom margin-left-2em">
-          <el-col :span="24">
-            <el-input v-model="exportData" type="textarea" :rows="8" readonly />
-          </el-col>
-        </el-row>
-
-        <!-- 导入配置 -->
-        <el-row v-if="showImportBox" class="margin-bottom margin-left-2em">
-          <el-col :span="24">
-            <el-input v-model="importData" type="textarea" :rows="8" placeholder="请在此处粘贴您的JSON配置" />
-            <div style="margin-top: 10px; text-align: right;">
-              <el-button @click="saveImport">保存</el-button>
+          </div>
+          <div class="setting-control column-control">
+            <el-select 
+              v-model="config.hotkey" 
+              placeholder="选择按键" 
+              size="small" 
+              @change="handleMouseHotkeyChange"
+            >
+              <el-option v-for="item in options.keys" :key="item.value" :label="item.label" :value="item.value" :disabled="item.disabled" />
+            </el-select>
+            
+            <div v-if="config.hotkey === 'custom'" class="custom-hotkey-display mt-1">
+              <span class="hotkey-text" v-if="config.customHotkey">{{ getCustomMouseHotkeyDisplayName() }}</span>
+              <span class="hotkey-text placeholder-text" v-else>未设置</span>
+              <el-button size="small" type="text" @click="openCustomMouseHotkeyDialog" class="edit-button">
+                <el-icon><Edit /></el-icon>
+              </el-button>
             </div>
-          </el-col>
-        </el-row>
-      </el-collapse-item>
-    </el-collapse>
-    <!--    -->
+          </div>
+        </div>
+
+        <!-- 全文翻译快捷键 -->
+        <div class="setting-item">
+          <div class="setting-label">
+            全文翻译
+            <el-tooltip content="快速切换全文翻译状态的快捷键" placement="top">
+              <el-icon class="ml-1 text-gray-400"><InfoFilled /></el-icon>
+            </el-tooltip>
+          </div>
+          <div class="setting-control column-control">
+            <el-select 
+              v-model="config.floatingBallHotkey" 
+              placeholder="选择按键" 
+              size="small" 
+              @change="handleHotkeyChange"
+            >
+              <el-option v-for="item in options.floatingBallHotkeys" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+
+            <div v-if="config.floatingBallHotkey === 'custom'" class="custom-hotkey-display mt-1">
+              <span class="hotkey-text" v-if="config.customFloatingBallHotkey">{{ getCustomHotkeyDisplayName() }}</span>
+              <span class="hotkey-text placeholder-text" v-else>未设置</span>
+              <el-button size="small" type="text" @click="openCustomHotkeyDialog" class="edit-button">
+                <el-icon><Edit /></el-icon>
+              </el-button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 划词翻译模式 -->
+        <div class="setting-item">
+          <div class="setting-label">划词翻译</div>
+          <div class="setting-control">
+            <el-select v-model="config.selectionTranslatorMode" placeholder="选择模式" size="small">
+              <el-option label="关闭" value="disabled" />
+              <el-option label="双语显示" value="bilingual" />
+              <el-option label="只显示译文" value="translation-only" />
+            </el-select>
+          </div>
+        </div>
+      </div>
+
+      <!-- 高级选项 -->
+      <div class="card advanced-card">
+        <el-collapse>
+          <el-collapse-item name="1">
+            <template #title>
+              <div class="advanced-title">
+                <el-icon><Setting /></el-icon> 高级选项
+              </div>
+            </template>
+            
+            <div class="advanced-content">
+              <!-- 主题设置 -->
+              <div class="setting-item">
+                <div class="setting-label">界面主题</div>
+                <div class="setting-control">
+                  <el-select v-model="config.theme" size="small">
+                    <el-option v-for="item in options.theme" :key="item.value" :label="item.label" :value="item.value" />
+                  </el-select>
+                </div>
+              </div>
+
+              <!-- 缓存开关 -->
+              <div class="setting-item">
+                <div class="setting-label">缓存翻译结果</div>
+                <div class="setting-control">
+                  <el-switch v-model="config.useCache" inline-prompt active-text="开" inactive-text="关" size="small"/>
+                </div>
+              </div>
+
+              <!-- 悬浮球 -->
+              <div class="setting-item">
+                <div class="setting-label">全文翻译悬浮球</div>
+                <div class="setting-control">
+                  <el-switch v-model="floatingBallEnabled" inline-prompt active-text="开" inactive-text="关" size="small"/>
+                </div>
+              </div>
+
+              <!-- 进度面板 -->
+              <div class="setting-item">
+                <div class="setting-label">翻译进度面板</div>
+                <div class="setting-control">
+                  <el-switch v-model="config.translationStatus" inline-prompt active-text="开" inactive-text="关" size="small"/>
+                </div>
+              </div>
+
+              <!-- 动画 -->
+              <div class="setting-item">
+                <div class="setting-label">动画效果</div>
+                <div class="setting-control">
+                  <el-switch v-model="config.animations" inline-prompt active-text="开" inactive-text="关" size="small"/>
+                </div>
+              </div>
+
+              <!-- 并发数 -->
+              <div class="setting-item">
+                <div class="setting-label">最大并发数</div>
+                <div class="setting-control">
+                  <el-input-number 
+                    v-model="config.maxConcurrentTranslations" 
+                    :min="1" :max="20" :step="1" 
+                    size="small" 
+                    @change="handleConcurrentChange" 
+                    controls-position="right"
+                  />
+                </div>
+              </div>
+
+              <!-- 代理 -->
+              <div class="setting-item" v-show="compute.showProxy">
+                <div class="setting-label">代理地址</div>
+                <div class="setting-control">
+                  <el-input v-model="config.proxy[config.service]" placeholder="无需则留空" size="small" />
+                </div>
+              </div>
+
+              <el-divider border-style="dashed" content-position="center">Prompt 设置</el-divider>
+
+              <!-- Roles -->
+              <div v-show="compute.showModel">
+                <div class="role-config">
+                  <div class="role-label">System Role</div>
+                  <el-input type="textarea" :rows="2" v-model="config.system_role[config.service]" placeholder="System Prompt" />
+                </div>
+                <div class="role-config mt-2">
+                  <div class="role-label">User Role ({{'{to}'}}, {{'{origin}'}})</div>
+                  <el-input type="textarea" :rows="2" v-model="config.user_role[config.service]" placeholder="User Prompt Template" />
+                </div>
+                <div class="text-right mt-2">
+                  <el-button link type="primary" size="small" @click="resetTemplate">
+                    <el-icon><Refresh /></el-icon> 恢复默认Prompt
+                  </el-button>
+                </div>
+              </div>
+
+              <el-divider border-style="dashed" content-position="center">配置管理</el-divider>
+
+              <div class="config-actions">
+                <el-button type="primary" plain size="small" @click="handleExport">
+                  <el-icon><Download /></el-icon> 导出
+                </el-button>
+                <el-button type="success" plain size="small" @click="handleImport">
+                  <el-icon><Upload /></el-icon> 导入
+                </el-button>
+              </div>
+
+              <!-- 导出/导入文本框 -->
+              <div v-if="showExportBox" class="mt-2">
+                <el-input v-model="exportData" type="textarea" :rows="4" readonly />
+                <div class="text-xs text-gray-400 mt-1">请复制上方配置JSON</div>
+              </div>
+              <div v-if="showImportBox" class="mt-2">
+                <el-input v-model="importData" type="textarea" :rows="4" placeholder="粘贴JSON配置" />
+                <div class="text-right mt-1">
+                  <el-button type="primary" size="small" @click="saveImport">确认导入</el-button>
+                </div>
+              </div>
+
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+      </div>
+    </div>
+
+    <!-- Dialogs -->
+    <CustomHotkeyInput
+      v-model="showCustomHotkeyDialog"
+      :current-value="config.customFloatingBallHotkey"
+      @confirm="handleCustomHotkeyConfirm"
+      @cancel="handleCustomHotkeyCancel"
+    />
+
+    <CustomHotkeyInput
+      v-model="showCustomMouseHotkeyDialog"
+      :current-value="config.customHotkey"
+      @confirm="handleCustomMouseHotkeyConfirm"
+      @cancel="handleCustomMouseHotkeyCancel"
+    />
   </div>
-
-  <!-- 自定义快捷键对话框 -->
-  <CustomHotkeyInput
-    v-model="showCustomHotkeyDialog"
-    :current-value="config.customFloatingBallHotkey"
-    @confirm="handleCustomHotkeyConfirm"
-    @cancel="handleCustomHotkeyCancel"
-  />
-
-  <!-- 自定义鼠标悬浮快捷键对话框 -->
-  <CustomHotkeyInput
-    v-model="showCustomMouseHotkeyDialog"
-    :current-value="config.customHotkey"
-    @confirm="handleCustomMouseHotkeyConfirm"
-    @cancel="handleCustomMouseHotkeyCancel"
-  />
-
-
-
 </template>
 
 <script lang="ts" setup>
@@ -503,7 +376,7 @@ import { computed, ref, watch, onUnmounted } from 'vue'
 import { models, options, servicesType, defaultOption } from "../entrypoints/utils/option";
 import { Config } from "@/entrypoints/utils/model";
 import { storage } from '@wxt-dev/storage';
-import { ChatDotRound, Refresh, Edit, Upload, Download } from '@element-plus/icons-vue'
+import { ChatDotRound, Refresh, Edit, Upload, Download, SwitchButton, InfoFilled, Setting } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, ElInputNumber } from 'element-plus'
 import browser from 'webextension-polyfill';
 import { defineAsyncComponent } from 'vue';
@@ -518,8 +391,6 @@ function updateTheme(theme: string) {
   if (theme === 'auto') {
     // 自动模式下，直接使用系统主题
     const isDark = darkModeMediaQuery.matches;
-    console.log('isDark', isDark);
-
     document.documentElement.classList.toggle('dark', isDark);
   } else {
     // 手动模式下，使用选择的主题
@@ -541,25 +412,17 @@ storage.getItem('local:config').then((value: any) => {
 });
 
 // 监听 storage 中 'local:config' 的变化
-// 当其他页面修改了配置时,会触发这个监听器
-// newValue 是新的配置值,oldValue 是旧的配置值
 storage.watch('local:config', (newValue: any, oldValue: any) => {
-  // 检查 newValue 是否为非空字符串
   if (typeof newValue === 'string' && newValue) {
-    // 将新的配置值解析为对象,并合并到当前的 config.value 中
-    // 这样可以保持所有页面的配置同步
     Object.assign(config.value, JSON.parse(newValue));
   }
 });
 
 // 监听菜单栏配置变化
-// 当配置发生改变时,将新的配置序列化为 JSON 字符串并保存到 storage 中
-// deep: true 表示深度监听对象内部属性的变化
 watch(() => JSON.parse(JSON.stringify(config.value)), (newValue: any, oldValue: any) => {
   storage.setItem('local:config', JSON.stringify(newValue));
   
-  // 检查是否需要显示刷新提示 (比较关键配置是否变化)
-  if (oldValue && oldValue.on !== undefined) { // 确保不是首次加载
+  if (oldValue && oldValue.on !== undefined) { 
     const needRefreshKeys = ['display', 'style', 'service', 'to', 'maxConcurrentTranslations'];
     const changed = needRefreshKeys.some(key => newValue[key] !== oldValue[key]);
     if (changed) {
@@ -570,46 +433,33 @@ watch(() => JSON.parse(JSON.stringify(config.value)), (newValue: any, oldValue: 
 
 // 计算属性
 let compute = ref({
-  // 2、是否是机器翻译
   showMachine: computed(() => servicesType.isMachine(config.value.service)),
-  // 3、是否显示代理
   showProxy: computed(() => servicesType.isUseProxy(config.value.service)),
-  // 4、是否显示模型
   showModel: computed(() => servicesType.isUseModel(config.value.service)),
-  // 5、是否显示token
   showToken: computed(() => servicesType.isUseToken(config.value.service)),
-  // 7、获取模型列表
   model: computed(() => models.get(config.value.service) || []),
-  // 8、是否需要自定义接口
   showCustom: computed(() => servicesType.isCustom(config.value.service)),
-  // 9、是否显示 DeepLX URL 配置
   showDeepLX: computed(() => config.value.service === 'deeplx'),
-  // 10、是否自定义模型
   showCustomModel: computed(() => config.value.model[config.value.service] === "自定义模型"),
-  // 11、判断是否为"双语模式"，控制一些翻译服务的显示
   filteredServices: computed(() => options.services.filter((service: any) =>
     !([service.google].includes(service.value) && config.value.display !== 1))
   ),
 })
 
-// 监听主题变化
 watch(() => config.value.theme, (newTheme) => {
   updateTheme(newTheme || 'auto');
 });
 
-// 使用 onchange 监听系统主题变化
 darkModeMediaQuery.onchange = (e) => {
   if (config.value.theme === 'auto') {
     updateTheme('auto');
   }
 };
 
-// 组件卸载时清理
 onUnmounted(() => {
   darkModeMediaQuery.onchange = null;
 });
 
-// 计算样式分组
 const styleGroups = computed(() => {
   const groups = options.styles.filter(item => item.disabled);
   return groups.map(group => ({
@@ -618,7 +468,6 @@ const styleGroups = computed(() => {
   }));
 });
 
-// 恢复默认模板
 const resetTemplate = () => {
   ElMessageBox.confirm(
     '确定要恢复默认的 system 和 user 模板吗？此操作将覆盖当前的自定义模板。',
@@ -636,89 +485,68 @@ const resetTemplate = () => {
       type: 'success',
       duration: 2000
     });
-  }).catch(() => {
-    // 用户取消操作，不做任何处理
-  });
+  }).catch(() => {});
 };
 
-// 悬浮球开关的计算属性
 const floatingBallEnabled = computed({
   get: () => !config.value.disableFloatingBall && config.value.on,
   set: (value) => {
     config.value.disableFloatingBall = !value;
-    // 向所有激活的标签页发送消息
     browser.tabs.query({}).then(tabs => {
       tabs.forEach(tab => {
         if (tab.id) {
           browser.tabs.sendMessage(tab.id, { 
             type: 'toggleFloatingBall',
             isEnabled: value 
-          }).catch(() => {
-            // 忽略发送失败的错误（可能是页面未加载内容脚本）
-          });
+          }).catch(() => {});
         }
       });
     });
   }
 });
 
-// 监听划词翻译模式变化
 watch(() => config.value.selectionTranslatorMode, (newMode) => {
-  // 向所有激活的标签页发送消息
   browser.tabs.query({}).then(tabs => {
     tabs.forEach(tab => {
       if (tab.id) {
         browser.tabs.sendMessage(tab.id, { 
           type: 'updateSelectionTranslatorMode',
           mode: newMode 
-        }).catch(() => {
-          // 忽略发送失败的错误（可能是页面未加载内容脚本）
-        });
+        }).catch(() => {});
       }
     });
   });
 });
 
-// 监听开关变化
 const handleSwitchChange = () => {
   showRefreshTip.value = true;
 };
 
-// 处理插件状态变化
 const handlePluginStateChange = (val: boolean) => {
-  // 如果插件被关闭，确保悬浮球和划词翻译也被关闭
   if (!val) {
-    // 处理悬浮球
     if (!config.value.disableFloatingBall) {
       config.value.disableFloatingBall = true;
-      // 向所有激活的标签页发送消息，关闭悬浮球
       browser.tabs.query({}).then(tabs => {
         tabs.forEach(tab => {
           if (tab.id) {
             browser.tabs.sendMessage(tab.id, { 
               type: 'toggleFloatingBall',
               isEnabled: false
-            }).catch(() => {
-              // 忽略发送失败的错误（可能是页面未加载内容脚本）
-            });
+            }).catch(() => {});
           }
         });
       });
     }
     
-    // 处理划词翻译
     if (config.value.selectionTranslatorMode !== 'disabled') {
       config.value.selectionTranslatorMode = 'disabled';
-      // 向所有激活的标签页发送消息，关闭划词翻译
       browser.tabs.query({}).then(tabs => {
         tabs.forEach(tab => {
           if (tab.id) {
             browser.tabs.sendMessage(tab.id, { 
               type: 'updateSelectionTranslatorMode',
               mode: 'disabled'
-            }).catch(() => {
-              // 忽略发送失败的错误（可能是页面未加载内容脚本）
-            });
+            }).catch(() => {});
           }
         });
       });
@@ -726,40 +554,17 @@ const handlePluginStateChange = (val: boolean) => {
   }
 };
 
-// 处理悬浮球开关变化
-const toggleFloatingBall = (val: boolean) => {
-  // 向所有激活的标签页发送消息
-  browser.tabs.query({}).then(tabs => {
-    tabs.forEach(tab => {
-      if (tab.id) {
-        browser.tabs.sendMessage(tab.id, { 
-          type: 'toggleFloatingBall',
-          isEnabled: val 
-        }).catch(() => {
-          // 忽略发送失败的错误（可能是页面未加载内容脚本）
-        });
-      }
-    });
-  });
-};
-
-// 自定义快捷键相关
 const showCustomHotkeyDialog = ref(false);
 const showCustomMouseHotkeyDialog = ref(false);
-
-// 配置导入导出相关
 const showExportConfig = ref(false);
 const showImportConfig = ref(false);
 const exportedConfig = ref('');
 const importConfigText = ref('');
 const importLoading = ref(false);
 
-// 处理快捷键选择变化
 const handleHotkeyChange = (value: string) => {
   if (value === 'custom') {
-    // 选择自定义后，如果没有设置过自定义快捷键，自动打开设置对话框
     if (!config.value.customFloatingBallHotkey) {
-      // 延迟一下，让选择框先完成状态更新
       setTimeout(() => {
         openCustomHotkeyDialog();
       }, 100);
@@ -767,12 +572,10 @@ const handleHotkeyChange = (value: string) => {
   }
 };
 
-// 打开自定义快捷键对话框
 const openCustomHotkeyDialog = () => {
   showCustomHotkeyDialog.value = true;
 };
 
-// 确认自定义快捷键
 const handleCustomHotkeyConfirm = (hotkey: string) => {
   config.value.customFloatingBallHotkey = hotkey;
   config.value.floatingBallHotkey = 'custom';
@@ -784,32 +587,22 @@ const handleCustomHotkeyConfirm = (hotkey: string) => {
   });
 };
 
-// 取消自定义快捷键
 const handleCustomHotkeyCancel = () => {
-  // 如果没有自定义快捷键，回退到默认选项
   if (!config.value.customFloatingBallHotkey) {
     config.value.floatingBallHotkey = 'Alt+T';
   }
 };
 
-// 获取自定义快捷键显示名称
 const getCustomHotkeyDisplayName = () => {
   if (!config.value.customFloatingBallHotkey) return '';
-  
-  if (config.value.customFloatingBallHotkey === 'none') {
-    return '已禁用';
-  }
-  
+  if (config.value.customFloatingBallHotkey === 'none') return '已禁用';
   const parsed = parseHotkey(config.value.customFloatingBallHotkey);
   return parsed.isValid ? parsed.displayName : config.value.customFloatingBallHotkey;
 };
 
-// 处理鼠标悬浮快捷键选择变化
 const handleMouseHotkeyChange = (value: string) => {
   if (value === 'custom') {
-    // 选择自定义后，如果没有设置过自定义快捷键，自动打开设置对话框
     if (!config.value.customHotkey) {
-      // 延迟一下，让选择框先完成状态更新
       setTimeout(() => {
         openCustomMouseHotkeyDialog();
       }, 100);
@@ -817,12 +610,10 @@ const handleMouseHotkeyChange = (value: string) => {
   }
 };
 
-// 打开自定义鼠标悬浮快捷键对话框
 const openCustomMouseHotkeyDialog = () => {
   showCustomMouseHotkeyDialog.value = true;
 };
 
-// 确认自定义鼠标悬浮快捷键
 const handleCustomMouseHotkeyConfirm = (hotkey: string) => {
   config.value.customHotkey = hotkey;
   config.value.hotkey = 'custom';
@@ -834,59 +625,39 @@ const handleCustomMouseHotkeyConfirm = (hotkey: string) => {
   });
 };
 
-// 取消自定义鼠标悬浮快捷键
 const handleCustomMouseHotkeyCancel = () => {
-  // 如果没有自定义快捷键，回退到默认选项
   if (!config.value.customHotkey) {
     config.value.hotkey = 'Control';
   }
 };
 
-// 获取自定义鼠标悬浮快捷键显示名称
 const getCustomMouseHotkeyDisplayName = () => {
   if (!config.value.customHotkey) return '';
-  
-  if (config.value.customHotkey === 'none') {
-    return '已禁用';
-  }
-  
+  if (config.value.customHotkey === 'none') return '已禁用';
   const parsed = parseHotkey(config.value.customHotkey);
   return parsed.isValid ? parsed.displayName : config.value.customHotkey;
 };
 
-// 处理并发数量变化
 const handleConcurrentChange = (currentValue: number | undefined, oldValue: number | undefined) => {
-  // 验证并发数量的有效性
   if (currentValue === undefined || currentValue < 1 || currentValue > 100) {
     ElMessage({
       message: '并发数量必须在 1-100 之间',
       type: 'warning',
       duration: 2000
     });
-    // 恢复默认值
     config.value.maxConcurrentTranslations = 6;
     return;
   }
-  
-  // 显示设置已更新的提示
   showRefreshTip.value = true;
-  
-  ElMessage({
-    message: `并发数量已更新为 ${currentValue}`,
-    type: 'success',
-    duration: 2000
-  });
 };
 
-// 显示刷新提示
 const showRefreshTip = ref(false);
 
-// 刷新页面
 const refreshPage = async () => {
   const tabs = await browser.tabs.query({ active: true, currentWindow: true });
   if (tabs[0]?.id) {
     browser.tabs.reload(tabs[0].id);
-    showRefreshTip.value = false; // 刷新后隐藏提示
+    showRefreshTip.value = false;
   }
 };
 
@@ -895,58 +666,26 @@ const exportData = ref('');
 const showImportBox = ref(false);
 const importData = ref('');
 
-// Azure OpenAI 端点地址验证函数
-const isValidAzureEndpoint = (endpoint: string) => {
-  if (!endpoint || endpoint.trim() === '') {
-    return false;
-  }
-
-  // 检查是否包含必要的组件
-  const hasAzureDomain = endpoint.includes('openai.azure.com');
-  const hasChatCompletions = endpoint.includes('/chat/completions');
-  const hasHttps = endpoint.startsWith('https://');
-
-  return hasHttps && hasAzureDomain && hasChatCompletions;
-};
-
 const handleExport = async () => {
   const configStr = await storage.getItem('local:config');
   if (!configStr) {
-    ElMessage({
-      message: '没有找到配置信息',
-      type: 'warning',
-    });
+    ElMessage({ message: '没有找到配置信息', type: 'warning' });
     return;
   }
-
   const configToExport = JSON.parse(configStr as string);
-
-  // Create a deep copy to avoid modifying the actual config
   const cleanedConfig = JSON.parse(JSON.stringify(configToExport));
-
-  // Clean system_role and user_role if they are default
   if (cleanedConfig.system_role) {
     for (const service in cleanedConfig.system_role) {
-      if (cleanedConfig.system_role[service] === defaultOption.system_role) {
-        delete cleanedConfig.system_role[service];
-      }
+      if (cleanedConfig.system_role[service] === defaultOption.system_role) delete cleanedConfig.system_role[service];
     }
-    if (Object.keys(cleanedConfig.system_role).length === 0) {
-      delete cleanedConfig.system_role;
-    }
+    if (Object.keys(cleanedConfig.system_role).length === 0) delete cleanedConfig.system_role;
   }
-
   if (cleanedConfig.user_role) {
     for (const service in cleanedConfig.user_role) {
-      if (cleanedConfig.user_role[service] === defaultOption.user_role) {
-        delete cleanedConfig.user_role[service];
-      }
+      if (cleanedConfig.user_role[service] === defaultOption.user_role) delete cleanedConfig.user_role[service];
     }
-    if (Object.keys(cleanedConfig.user_role).length === 0) {
-      delete cleanedConfig.user_role;
-    }
+    if (Object.keys(cleanedConfig.user_role).length === 0) delete cleanedConfig.user_role;
   }
-
   exportData.value = JSON.stringify(cleanedConfig, null, 2);
   showExportBox.value = !showExportBox.value;
   showImportBox.value = false;
@@ -960,192 +699,27 @@ const handleImport = () => {
 const saveImport = async () => {
   try {
     const parsedConfig = JSON.parse(importData.value);
-    // Add validation here
     if (!validateConfig(parsedConfig)) {
-      ElMessage({
-        message: '配置无效或格式不正确, 请检查!',
-        type: 'error',
-      });
+      ElMessage({ message: '配置无效或格式不正确', type: 'error' });
       return;
     }
     await storage.setItem('local:config', JSON.stringify(parsedConfig));
-    ElMessage({
-      message: '配置导入成功!',
-      type: 'success',
-    });
+    ElMessage({ message: '配置导入成功!', type: 'success' });
     showImportBox.value = false;
     importData.value = '';
-    // Optionally, reload the extension or relevant parts
   } catch (e) {
-    ElMessage({
-      message: '配置格式错误, 请检查!',
-      type: 'error',
-    });
+    ElMessage({ message: '配置格式错误', type: 'error' });
   }
 };
 
-
-// 切换导出配置显示
-const toggleExportConfig = async () => {
-  if (showExportConfig.value) {
-    // 如果已经显示，则隐藏
-    showExportConfig.value = false;
-    exportedConfig.value = '';
-  } else {
-    // 如果未显示，则显示并生成配置
-    try {
-      // 确保从storage获取最新的配置
-      const latestConfig = await storage.getItem('local:config');
-      let configToExport;
-
-      if (latestConfig && typeof latestConfig === 'string') {
-        // 使用storage中的最新配置
-        configToExport = JSON.parse(latestConfig);
-      } else {
-        // 如果storage中没有，使用当前config.value
-        configToExport = JSON.parse(JSON.stringify(config.value));
-      }
-
-      exportedConfig.value = JSON.stringify(configToExport, null, 2);
-      showExportConfig.value = true;
-
-      ElMessage({
-        message: '配置已生成，请复制保存',
-        type: 'success',
-        duration: 2000
-      });
-    } catch (error) {
-      ElMessage({
-         message: '导出配置失败：' + ((error as Error)?.message || '未知错误'),
-         type: 'error',
-         duration: 3000
-       });
-    }
-  }
-};
-
-// 复制导出的配置到剪贴板
-const copyExportedConfig = async () => {
-  try {
-    await navigator.clipboard.writeText(exportedConfig.value);
-    ElMessage({
-      message: '配置已复制到剪贴板',
-      type: 'success',
-      duration: 2000
-    });
-  } catch (error) {
-    ElMessage({
-      message: '复制失败，请手动复制',
-      type: 'warning',
-      duration: 2000
-    });
-  }
-};
-
-// 切换导入配置显示
-const toggleImportConfig = () => {
-  if (showImportConfig.value) {
-    // 如果已经显示，则隐藏并清空内容
-    showImportConfig.value = false;
-    importConfigText.value = '';
-  } else {
-    // 如果未显示，则显示
-    showImportConfig.value = true;
-    importConfigText.value = '';
-  }
-};
-
-// 取消导入
-const cancelImport = () => {
-  // 清空输入框并隐藏导入区域
-  importConfigText.value = '';
-  showImportConfig.value = false;
-  importLoading.value = false;
-};
-
-// 导入配置
-const importConfig = async () => {
-  if (!importConfigText.value.trim()) {
-    ElMessage({
-      message: '请输入配置内容',
-      type: 'warning',
-      duration: 2000
-    });
-    return;
-  }
-
-  importLoading.value = true;
-
-  try {
-    // 解析JSON配置
-    const importedConfig = JSON.parse(importConfigText.value);
-
-    // 验证配置格式
-    if (!validateConfig(importedConfig)) {
-      throw new Error('配置格式不正确');
-    }
-
-    // 确认导入
-    await ElMessageBox.confirm(
-      '导入配置将覆盖当前所有设置，确定要继续吗？',
-      '确认导入',
-      {
-        confirmButtonText: '确定导入',
-        cancelButtonText: '取消',
-        type: 'warning',
-      }
-    );
-
-    // 应用新配置
-    Object.assign(config.value, importedConfig);
-
-    // 保存到storage
-    await storage.setItem('local:config', JSON.stringify(config.value));
-
-    // 隐藏导入区域并清空输入
-    showImportConfig.value = false;
-    importConfigText.value = '';
-
-    ElMessage({
-      message: '配置导入成功',
-      type: 'success',
-      duration: 2000
-    });
-
-  } catch (error) {
-    if ((error as Error).message !== 'cancel') {
-      ElMessage({
-        message: '导入失败：' + ((error as Error).message || '配置格式错误'),
-        type: 'error',
-        duration: 3000
-      });
-    }
-  } finally {
-    importLoading.value = false;
-  }
-};
-
-// 验证配置格式
 const validateConfig = (configData: any): boolean => {
   try {
-    // 检查是否是对象
-    if (typeof configData !== 'object' || configData === null) {
-      return false;
-    }
-
-    // 检查必要的配置字段
+    if (typeof configData !== 'object' || configData === null) return false;
     const requiredFields = ['on', 'service', 'display', 'from', 'to'];
     for (const field of requiredFields) {
-      if (!(field in configData)) {
-        return false;
-      }
+      if (!(field in configData)) return false;
     }
-
-    // 检查服务配置
-    if (typeof configData.service !== 'string') {
-      return false;
-    }
-
+    if (typeof configData.service !== 'string') return false;
     return true;
   } catch (error) {
     return false;
@@ -1155,278 +729,125 @@ const validateConfig = (configData: any): boolean => {
 </script>
 
 <style scoped>
-
-.select-left {
-  text-align: left;
+.settings-container {
+  padding-bottom: 20px;
 }
 
-.flex-end {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.select-divider {
-  background: #f2f6fc;
-  color: #409eff;
-  font-size: 12px;
-  padding: 4px 12px;
-  cursor: default;
-  font-weight: 500;
-  letter-spacing: 1px;
+.card-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fr-text-secondary);
+  margin-bottom: 12px;
   text-transform: uppercase;
-  border-bottom: 1px solid #e4e7ed;
-  margin: 4px 0;
-  pointer-events: none;
-  opacity: 0.9;
+  letter-spacing: 0.5px;
 }
 
-.icon-margin {
-  margin-left: 0.25em;
+.main-switch-card {
+  border: 1px solid var(--fr-border-color);
+  background: var(--fr-card-bg);
 }
 
-/* 添加自适应样式 */
-:deep(.el-select) {
-  width: 100%;
+.font-bold {
+  font-weight: 600;
 }
 
-:deep(.el-input) {
-  width: 100%;
+.ml-1 {
+  margin-left: 4px;
 }
 
-.margin-bottom {
-  margin-bottom: 10px;
+.mt-1 {
+  margin-top: 4px;
 }
 
-.margin-left-2em {
-  margin-left: 1em;
-  margin-right: 1em;
+.mt-2 {
+  margin-top: 8px;
 }
 
-.margin-top-2em {
-  margin-top: 1em;
+.mb-3 {
+  margin-bottom: 12px;
 }
 
-.margin-top-1em {
-  margin-top: 0.5em;
+.text-gray-400 {
+  color: #909399;
 }
 
-/* 设置滚动条样式 */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+.text-xs {
+  font-size: 12px;
 }
 
-::-webkit-scrollbar-thumb {
-  background: #ddd;
-  border-radius: 3px;
+.text-right {
+  text-align: right;
 }
 
-::-webkit-scrollbar-track {
-  background: #f5f5f5;
-  border-radius: 3px;
+.column-control {
+  flex-direction: column;
+  align-items: flex-end;
 }
 
-.refresh-tip {
-  margin: 0 1em;
+.role-config {
+  background: var(--fr-bg-color);
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--fr-border-color);
 }
 
-.refresh-button {
+.role-label {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--fr-text-secondary);
+}
+
+.config-actions {
   display: flex;
   justify-content: center;
-  align-items: center;
-  padding: 0.5em 1em;
-  color: #fff;
-  background-color: #409eff;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.3s, color 0.3s;
+  gap: 12px;
+  margin-top: 10px;
 }
 
-.refresh-button:hover {
-  background-color: #66b1ff;
-  color: #fff;
-}
-
-.new-feature-badge {
-  display: inline-block;
-  font-size: 12px;
-  background-color: #f56c6c;
-  color: white;
-  padding: 1px 6px;
-  border-radius: 10px;
-  margin-right: 8px;
-  font-weight: bold;
-  animation: bounce 1s infinite alternate;
-}
-
-@keyframes pulse-glow {
-  0% {
-    box-shadow: 0 2px 8px rgba(64, 158, 255, 0.1);
-  }
-  100% {
-    box-shadow: 0 2px 12px rgba(64, 158, 255, 0.5);
-  }
-}
-
-@keyframes bounce {
-  0% {
-    transform: translateY(0);
-  }
-  100% {
-    transform: translateY(-3px);
-  }
-}
-
-/* 自定义快捷键相关样式 */
-.hotkey-config {
+.advanced-title {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 6px;
-  width: 100%;
+  font-weight: 500;
+}
+
+:deep(.el-collapse) {
+  border: none;
+}
+:deep(.el-collapse-item__header) {
+  border: none;
+  background: transparent;
+  height: 40px;
+}
+:deep(.el-collapse-item__wrap) {
+  border: none;
+  background: transparent;
+}
+:deep(.el-collapse-item__content) {
+  padding-bottom: 0;
 }
 
 .custom-hotkey-display {
   display: flex;
   align-items: center;
-  padding: 6px 6px 6px 10px;
+  padding: 2px 6px 2px 10px;
   background: var(--el-color-primary-light-9);
   border: 1px solid var(--el-color-primary-light-7);
   border-radius: 4px;
   font-size: 12px;
-  height: 32px;
   width: 100%;
   box-sizing: border-box;
-  overflow: hidden;
 }
 
 .hotkey-text {
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  flex: 1;
+  font-family: monospace;
   font-weight: 600;
   color: var(--el-color-primary);
-  font-size: 13px;
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-  max-width: calc(100% - 32px);
 }
 
 .edit-button {
-  padding: 2px 4px;
-  margin-left: 4px;
-  color: var(--el-color-primary);
-  width: 24px;
-  height: 24px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.edit-button:hover {
-  background: var(--el-color-primary-light-8);
-}
-
-.edit-button .el-icon {
-  font-size: 12px;
-}
-
-.placeholder-text {
-  color: var(--el-text-color-placeholder) !important;
-  font-style: italic;
-  font-family: inherit !important;
-  font-weight: normal !important;
-}
-
-/* 自定义快捷键行样式 */
-.custom-hotkey-row {
-  border-radius: 8px;
-  padding: 8px;
-  margin: 6px 0 !important;
-  background: linear-gradient(135deg, 
-    rgba(64, 158, 255, 0.03) 0%, 
-    rgba(64, 158, 255, 0.01) 50%, 
-    rgba(103, 194, 58, 0.02) 100%);
-  transition: all 0.3s ease;
-  position: relative;
-  border: 1px solid transparent;
-}
-
-.custom-hotkey-row::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: linear-gradient(135deg, 
-    rgba(64, 158, 255, 0.2) 0%, 
-    rgba(64, 158, 255, 0.1) 30%,
-    rgba(103, 194, 58, 0.1) 70%,
-    rgba(103, 194, 58, 0.2) 100%);
-  border-radius: 8px;
-  z-index: -1;
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-.custom-hotkey-row::after {
-  content: '';
-  position: absolute;
-  top: -1px;
-  left: -1px;
-  right: -1px;
-  bottom: -1px;
-  background: linear-gradient(135deg, 
-    rgba(64, 158, 255, 0.3), 
-    rgba(103, 194, 58, 0.3));
-  border-radius: 8px;
-  z-index: -2;
-  opacity: 0.6;
-}
-
-.custom-hotkey-row:hover {
-  background: linear-gradient(135deg, 
-    rgba(64, 158, 255, 0.05) 0%, 
-    rgba(64, 158, 255, 0.03) 50%, 
-    rgba(103, 194, 58, 0.04) 100%);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.15);
-}
-
-.custom-hotkey-row:hover::before {
-  opacity: 0.1;
-}
-
-/* 自定义标识徽章 */
-.custom-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 6px;
-  background: var(--el-color-primary);
-  color: white;
-  font-size: 10px;
-  border-radius: 10px;
-  font-weight: 500;
-  margin-left: 6px;
-  line-height: 1;
-}
-
-/* 错误样式 */
-.input-error {
-  border-color: var(--el-color-danger) !important;
-}
-
-.input-error:focus {
-  border-color: var(--el-color-danger) !important;
-  box-shadow: 0 0 0 2px rgba(245, 108, 108, 0.2) !important;
-}
-
-.error-text {
-  color: var(--el-color-danger);
-  font-size: 12px;
-  margin-top: 4px;
-  line-height: 1.4;
+  padding: 2px;
 }
 </style>

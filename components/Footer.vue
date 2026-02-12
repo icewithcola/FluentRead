@@ -1,267 +1,212 @@
 <template>
-  <div class="footer-container footer-size">
-    <p class="translation-count">你已经翻译
-      <el-text class="count-number" type="primary">{{ computedCount }}</el-text>
-      次
-    </p>
-    <div class="footer-links">
-      <el-link class="action-link left" :class="{ 'failed': buttonText === '清除失败', 'success': buttonText === '清除成功' }" @click="clearCache"
-        :disabled="buttonDisabled">
-        <el-icon v-if="showLoading">
-          <Loading class="el-icon-loading" />
-        </el-icon>
-        {{ buttonText }}
-      </el-link>
-      <div class="right-links">
-        <el-link class="action-link" href="https://fluent.thinkstu.com/" target="_blank">
-          <el-icon class="github-icon">
-            <Star />
-          </el-icon>
-          GitHub开源
-        </el-link>
+  <div class="footer-container">
+    <div class="footer-content">
+      <div class="left-section">
+        <span class="count-label">已翻译</span>
+        <span class="count-number">{{ computedCount }}</span>
+        <span class="count-label">次</span>
+      </div>
+
+      <div class="right-section">
+        <el-tooltip content="清除翻译缓存" placement="top">
+          <el-button 
+            link 
+            :type="clearStatusType" 
+            @click="clearCache" 
+            :disabled="isClearing"
+            class="action-btn"
+          >
+            <el-icon :class="{ 'is-loading': isClearing }">
+              <Refresh v-if="!isClearing && !clearResult" />
+              <Loading v-else-if="isClearing" />
+              <CircleCheckFilled v-else-if="clearResult === 'success'" />
+              <Warning v-else-if="clearResult === 'error'" />
+            </el-icon>
+          </el-button>
+        </el-tooltip>
+
+        <el-tooltip content="GitHub 开源" placement="top">
+          <el-link 
+            href="https://fluent.thinkstu.com/" 
+            target="_blank" 
+            :underline="false"
+            class="action-btn"
+          >
+            <el-icon><Star /></el-icon>
+          </el-link>
+        </el-tooltip>
+
+        <el-tooltip content="赞赏作者" placement="top">
+          <el-button link @click="showDonate = true" class="action-btn donate-btn">
+            <el-icon><Coffee /></el-icon>
+          </el-button>
+        </el-tooltip>
       </div>
     </div>
     
     <!-- 赞赏码弹窗 -->
-    <div
+    <el-dialog
+      v-model="showDonate"
       title="赞赏作者"
       width="300px"
       align-center
-      :show-close="true"
-      :close-on-click-modal="true"
-      :close-on-press-escape="true"
-      class="donate-dialog"
+      append-to-body
+      class="donate-dialog-custom"
     >
       <div class="donate-content">
-        <p class="donate-text">如果你觉得这个插件对您有帮助，<br>可以通过微信👇🏻赞赏作者一杯咖啡
-          <el-icon class="donate-icon"><Coffee /></el-icon> </p>
+        <p class="donate-text">
+          如果觉得好用，<br>欢迎请作者喝一杯咖啡 ☕️
+        </p>
         <div class="qrcode-container">
           <img src="/misc/approve.jpg" alt="赞赏码" class="qrcode-image" />
         </div>
-        <p class="donate-thanks">感谢你的支持！❤️</p>
+        <p class="donate-thanks">感谢您的支持！❤️</p>
       </div>
-    </div>
+    </el-dialog>
   </div>
 </template>
 
 <script lang="ts" setup>
 import { computed, reactive, ref } from 'vue';
-import { Star, Loading, Coffee } from "@element-plus/icons-vue";
+import { Star, Loading, Coffee, Refresh, CircleCheckFilled, Warning } from "@element-plus/icons-vue";
 import { Config } from "../entrypoints/utils/model";
 import { storage } from '@wxt-dev/storage';
 import browser from 'webextension-polyfill';
 
-// 实际上是 el-link 而不是 el-button
-const buttonDisabled = ref(false);
-const buttonText = ref('清除翻译缓存');
+const isClearing = ref(false);
+const clearResult = ref<'' | 'success' | 'error'>('');
+const showDonate = ref(false);
 
-const showLoading = ref(false);
+const clearStatusType = computed(() => {
+  if (clearResult.value === 'success') return 'success';
+  if (clearResult.value === 'error') return 'danger';
+  return 'default';
+});
+
 async function clearCache() {
+  if (isClearing.value) return;
+  
   try {
-    buttonDisabled.value = true;
-    buttonText.value = "正在清除...";
-    showLoading.value = true;
+    isClearing.value = true;
+    clearResult.value = '';
 
-    // 获取当前标签页
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tabs[0]?.id) {
       throw new Error('No active tab found');
     }
 
-    // 发送消息到 content.js
     await browser.tabs.sendMessage(tabs[0].id, { message: 'clearCache' });
 
-    // 显示成功状态
-    buttonText.value = "清除成功";
-
-    // 恢复按钮状态
-    setTimeout(() => {
-      buttonDisabled.value = false;
-      buttonText.value = '清除翻译缓存';
-      showLoading.value = false;
-    }, 1500);
-
+    clearResult.value = 'success';
   } catch (error) {
     console.error('清除缓存失败:', error);
-    buttonText.value = "清除失败";
-
-    // 恢复按钮状态
+    clearResult.value = 'error';
+  } finally {
     setTimeout(() => {
-      buttonDisabled.value = false;
-      buttonText.value = '清除翻译缓存';
-      showLoading.value = false;
-    }, 1500);
+      isClearing.value = false;
+      clearResult.value = '';
+    }, 2000);
   }
 }
 
-// 获取配置，用于显示翻译次数
 let localConfig = reactive(new Config());
 
 storage.getItem('local:config').then((value) => {
   if (typeof value === 'string' && value) Object.assign(localConfig, JSON.parse(value));
 });
 
-storage.watch('local:config', (newValue, oldValue) => {
+storage.watch('local:config', (newValue) => {
   if (typeof newValue === 'string' && newValue) Object.assign(localConfig, JSON.parse(newValue));
 });
 
 const computedCount = computed(() => localConfig.count);
-
-
 </script>
 
 <style scoped>
-.footer-size {
-  font-size: 0.8em;
-}
-
 .footer-container {
-  background: var(--fr-bg-color);
-  margin: -16px;
+  margin-top: 16px;
+  padding: 0 4px;
 }
 
-.translation-count {
-  margin: 0px;
-  font-size: 1.2em;
-  color: var(--fr-text-color-regular);
-  text-align: center;
-}
-
-.count-number {
-  font-weight: 600;
-  font-size: 1.1em;
-  margin: 0 3px;
-  color: var(--el-color-success);
-}
-
-.footer-links {
+.footer-content {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 16px;
+  padding: 12px 16px;
+  background: var(--fr-card-bg);
+  border-radius: var(--fr-border-radius);
+  box-shadow: var(--fr-shadow);
 }
 
-.right-links {
+.left-section {
   display: flex;
-  gap: 12px;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--fr-text-secondary);
 }
 
-.action-link {
-  font-size: 1.2em;
-  transition: all 1s ease;
-  text-decoration: none !important;
+.count-number {
+  font-family: monospace;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--fr-primary-color);
+}
+
+.right-section {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
 }
 
-.action-link:hover {
-  opacity: 0.8;
+.action-btn {
+  font-size: 18px;
+  padding: 4px;
+  height: auto;
+  color: var(--fr-text-secondary);
+  transition: all 0.2s;
 }
 
-.action-link:active {
-  transform: scale(0.98);
+.action-btn:hover {
+  color: var(--fr-primary-color);
+  transform: translateY(-1px);
 }
 
-.github-icon, .donate-icon {
-  font-size: 1.2em;
-  margin-right: 2px;
-}
-
-.donate-icon {
-  color: var(--el-color-warning);
-}
-
-:deep(.el-icon-loading) {
-  animation: rotating 1s linear infinite;
-}
-
-@keyframes rotating {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.clearing {
-  color: var(--el-color-success) !important;
-}
-
-.failed {
-  color: var(--el-color-danger) !important;
-}
-
-/* 添加成功状态样式 */
-.action-link.success {
-  color: var(--el-color-success) !important;
-}
-
-/* 赞赏码弹窗样式 */
-.donate-dialog :deep(.el-dialog__header) {
-  padding-bottom: 10px;
-  margin-right: 0;
-  text-align: center;
-  border-bottom: 1px solid var(--fr-border-color-lighter);
-}
-
-.donate-dialog :deep(.el-dialog__headerbtn) {
-  top: 15px;
+.donate-btn:hover {
+  color: #E6A23C; /* Warning color for coffee */
 }
 
 .donate-content {
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-top: -5px;
+  text-align: center;
 }
 
 .donate-text {
-  text-align: center;
-  margin-bottom: 15px;
-  color: var(--fr-text-color-primary);
+  font-size: 14px;
+  color: var(--fr-text-color);
+  margin-bottom: 16px;
   line-height: 1.5;
 }
 
 .qrcode-container {
-  width: 200px;
-  height: 200px;
-  margin: 0 auto 15px;
-  border-radius: 8px;
+  width: 180px;
+  height: 180px;
+  border-radius: 12px;
   overflow: hidden;
-  border: 1px solid var(--fr-border-color-light);
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
-  transition: transform 0.3s ease;
-}
-
-.qrcode-container:hover {
-  transform: scale(1.02);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  margin-bottom: 12px;
 }
 
 .qrcode-image {
   width: 100%;
   height: 100%;
-  object-fit: contain;
-  background-color: #fff;
+  object-fit: cover;
 }
 
 .donate-thanks {
-  text-align: center;
-  margin: 10px 0 15px;
-  color: var(--el-color-success);
-  font-weight: bold;
-}
-
-/* 暗色主题适配 */
-@media (prefers-color-scheme: dark) {
-  .footer-container {
-    background: var(--fr-bg-color-darker);
-  }
-  
-  .qrcode-image {
-    border: 1px solid var(--fr-border-color);
-  }
+  font-size: 12px;
+  color: #909399;
 }
 </style>
