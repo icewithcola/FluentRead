@@ -70,7 +70,7 @@ export function grabAllNode(rootNode: Node): Element[] {
         {
             acceptNode: (node: Node): number => {
                 if (node instanceof Text) {
-                    return node.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+                    return node.textContent && stripWhitespace(node.textContent) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
                 }
 
                 if (!(node instanceof Element)) return NodeFilter.FILTER_SKIP;
@@ -88,11 +88,11 @@ export function grabAllNode(rootNode: Node): Element[] {
 
                 for (const child of node.childNodes) {
                     if (child.nodeType === Node.ELEMENT_NODE) {
-                        if ((child as Element).textContent?.trim()) {
+                        if ((child as Element).textContent && stripWhitespace((child as Element).textContent!)) {
                             hasNonEmptyElement = true;
                             break;
                         }
-                    } else if (child.nodeType === Node.TEXT_NODE && child.textContent?.trim()) {
+                    } else if (child.nodeType === Node.TEXT_NODE && child.textContent && stripWhitespace(child.textContent)) {
                         hasText = true;
                     }
                 }
@@ -189,7 +189,7 @@ export function grabNode(node: any): any {
     // 6. 首行文本处理：处理 div 和 label 的首行文本
     if (curTag === 'div' || curTag === 'label') {
         // 如果 div 只有文本节点而没有元素子节点，也可以直接翻译
-        if (detectChildMeta(node) && node.textContent?.trim()) {
+        if (detectChildMeta(node) && node.textContent && stripWhitespace(node.textContent)) {
             return node;
         }
         return handleFirstLineText(node);
@@ -212,11 +212,25 @@ function shouldSkipNode(node: any, tag: string): boolean {
         isShortTextNode(node);
 }
 
+// Strip all Unicode whitespace characters, including zero-width spaces, BOM, etc.
+// Covers: standard whitespace, non-breaking spaces, em/en spaces, ideographic space,
+// zero-width spaces (U+200B, U+200C, U+200D), word joiner (U+2060), BOM (U+FEFF), etc.
+const UNICODE_WHITESPACE_RE = /^[\s\u00A0\u1680\u180E\u2000-\u200D\u2028\u2029\u202F\u205F\u2060\u3000\uFEFF]+|[\s\u00A0\u1680\u180E\u2000-\u200D\u2028\u2029\u202F\u205F\u2060\u3000\uFEFF]+$/g;
+function stripWhitespace(text: string): string {
+    return text.replace(UNICODE_WHITESPACE_RE, '');
+}
+
+// Check if text contains only ASCII printable characters (codes 32-126)
+// i.e. it is "English-like" content
+function isAsciiOnly(text: string): boolean {
+    return /^[\x20-\x7E\s]*$/.test(text);
+}
+
 // 检查节点是否为短文本（三个单词以内）
 function isShortTextNode(node: any): boolean {
     if (!node || !node.textContent) return false;
 
-    const text = node.textContent.trim();
+    const text = stripWhitespace(node.textContent);
     if (!text) return false;
 
     // 短文本的判断标准：
@@ -224,8 +238,8 @@ function isShortTextNode(node: any): boolean {
     // 2. 对于中文，按字符数判断（三个中文字符以内）
     // 3. 排除常见的标点符号和特殊字符
 
-    // 去除首尾空白字符
-    const trimmedText = text.trim();
+    // 去除首尾空白字符（包含所有 Unicode 空白）
+    const trimmedText = text;
     
     // 检查是否为常见的标点符号或特殊字符
     if (/^[,.!?;:'"()\[\]{}<>@#$%^&*_+=\-|~`]+$/.test(trimmedText)) {
@@ -237,6 +251,11 @@ function isShortTextNode(node: any): boolean {
     const hasLetterOrChinese = /[a-zA-Z一-鿿]/.test(trimmedText);
     if (!hasLetterOrChinese) {
         return false;
+    }
+
+    // For non-ASCII (non-English) text, as long as there are at least 3 characters, allow translation
+    if (!isAsciiOnly(text)) {
+        return text.length < 3;
     }
 
     // 分割单词（支持中英文混合）
@@ -303,17 +322,21 @@ function isShortTextNode(node: any): boolean {
 function checkTextSize(node: any): boolean {
     // 1. 若文本内容长度超过 3072
     // 2. 或者 outerHTML 长度超过 4096，都视为过长
-    // 3. 少于16个字符
-    return node.textContent.length > 3072 ||
+    // 3. 对于英文（纯ASCII），少于16个字符视为过短
+    // 4. 对于非英文，少于3个字符视为过短
+    const text = node.textContent || '';
+    const stripped = stripWhitespace(text);
+    const minLength = isAsciiOnly(stripped) ? 16 : 3;
+    return text.length > 3072 ||
         (node.outerHTML && node.outerHTML.length > 4096) ||
-        node.textContent.length < 16;
+        stripped.length < minLength;
 }
 
 // 检查节点内容是否主要为数字
 function isMainlyNumericContent(node: any): boolean {
     if (!node || !node.textContent) return false;
 
-    const text = node.textContent.trim();
+    const text = stripWhitespace(node.textContent);
     if (!text) return false;
 
     // 如果内容很短，且是纯数字格式，则跳过
@@ -330,7 +353,7 @@ function isMainlyNumericContent(node: any): boolean {
     const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null);
     let textNode;
     while (textNode = walker.nextNode()) {
-        const nodeText = textNode.textContent?.trim() || '';
+        const nodeText = textNode.textContent ? stripWhitespace(textNode.textContent) : '';
         if (nodeText) {
             textNodes.push(nodeText);
         }
@@ -353,7 +376,7 @@ function isMainlyNumericContent(node: any): boolean {
 function isUserIdentifier(text: string): boolean {
     if (!text || typeof text !== 'string') return false;
 
-    const trimmedText = text.trim();
+    const trimmedText = stripWhitespace(text);
 
     // 检查是否为社交媒体用户名格式
     if (/^@\w+/.test(trimmedText)) return true;  // Twitter格式：@username
@@ -397,8 +420,8 @@ function isUserIdentifier(text: string): boolean {
 function isNumericContent(text: string): boolean {
     if (!text || typeof text !== 'string') return false;
 
-    // 去除空白字符
-    const trimmedText = text.trim();
+    // Strip all Unicode whitespace characters
+    const trimmedText = stripWhitespace(text);
     if (!trimmedText) return false;
 
     // 首先检查是否为用户标识符
@@ -456,13 +479,13 @@ function isButton(node: any, tag: string): boolean {
     // 1. 若当前标签就是 button
     // 2. 或者当前标签为 span 并且其父节点为 button，则视为按钮
     return tag === 'button' ||
-        (tag === 'span' && node.parentNode?.tagName.toLowerCase() === 'button');
+        (tag === 'span' && node.parentNode?.tagName?.toLowerCase() === 'button');
 }
 
 // 处理按钮翻译
 function handleButtonTranslation(node: any): void {
     // 1. 若文本非空，则调用 handleBtnTranslation 进行按钮文本翻译处理
-    if (node.textContent.trim()) {
+    if (stripWhitespace(node.textContent || '')) {
         handleBtnTranslation(node);
     }
 }
@@ -492,7 +515,7 @@ function handleFirstLineText(node: any): boolean {
     // 3. 翻译成功后，替换该文本；出现错误时，打印错误日志
     let child = node.firstChild;
     while (child) {
-        if (child.nodeType === Node.TEXT_NODE && child.textContent.trim()) {
+        if (child.nodeType === Node.TEXT_NODE && child.textContent && stripWhitespace(child.textContent)) {
             browser.runtime.sendMessage({
                 context: document.title,
                 origin: child.textContent
