@@ -112,8 +112,12 @@ export default defineBackground({
 
         // 处理翻译请求
         browser.runtime.onMessage.addListener((message: any) => {
-            // Skip stream requests handled via Port
+            // Skip messages intended for other listeners (e.g. offscreen document)
+            if (message?.type === 'CHROME_TRANSLATE_OFFSCREEN') return;
             if (message?.type === 'stream-translate') return;
+
+            // Only handle translation requests (messages with 'origin' field)
+            if (!message?.origin) return;
 
             return new Promise(async (resolve, reject) => {
                 try {

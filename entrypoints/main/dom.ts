@@ -226,6 +226,13 @@ function isAsciiOnly(text: string): boolean {
     return /^[\x20-\x7E\s]*$/.test(text);
 }
 
+// Count meaningful characters in text, excluding punctuation and symbols.
+// Only counts: letters (a-z, A-Z), digits (0-9), CJK characters, Japanese kana, Korean, etc.
+function countMeaningfulChars(text: string): number {
+    const matches = text.match(/[a-zA-Z0-9\u4e00-\u9fff\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF]/g);
+    return matches ? matches.length : 0;
+}
+
 // 检查节点是否为短文本（三个单词以内）
 function isShortTextNode(node: any): boolean {
     if (!node || !node.textContent) return false;
@@ -246,48 +253,45 @@ function isShortTextNode(node: any): boolean {
         return false;
     }
 
-    // 检查是否主要为数字（已在isMainlyNumericContent中处理）
-    // 这里我们只关心是否包含字母或中文字符
-    const hasLetterOrChinese = /[a-zA-Z一-鿿]/.test(trimmedText);
-    if (!hasLetterOrChinese) {
+    // Check if text contains letters, CJK characters, or Japanese kana
+    // (already handled numeric content in isMainlyNumericContent)
+    const hasLetterOrCJK = /[a-zA-Z\u4e00-\u9fff\u3040-\u309F\u30A0-\u30FF]/.test(trimmedText);
+    if (!hasLetterOrCJK) {
         return false;
     }
 
-    // For non-ASCII (non-English) text, as long as there are at least 3 characters, allow translation
+    // For non-ASCII (non-English) text, including CJK characters and Japanese kana,
+    // as long as there are at least 3 meaningful characters (excluding symbols), allow translation
     if (!isAsciiOnly(text)) {
-        return text.length < 3;
+        return countMeaningfulChars(text) < 3;
     }
 
-    // 分割单词（支持中英文混合）
-    // 对于英文：按空白字符分割
-    // 对于中文：每个字符可以视为一个单词
+    // Split words (supports mixed English/Chinese)
+    // For English: split by whitespace
+    // For Chinese: each character can be treated as a word
     const words = trimmedText.split(/\s+/);
     let wordCount = 0;
     
     for (const word of words) {
         if (word.length === 0) continue;
         
-        // 对于中文文本，每个中文字符可以视为一个单词
-        // 但我们将中文字符串作为一个整体单词处理，除非它包含空格分隔
+        // Skip words that are purely punctuation/symbols (no meaningful characters)
+        if (countMeaningfulChars(word) === 0) {
+            continue;
+        }
+        
+        // For CJK text, each CJK character can be treated as a word
         const chineseChars = word.match(/[一-鿿]/g);
         if (chineseChars) {
-            // 中文文本：长度不超过3个字符视为短文本
             if (chineseChars.length <= 3) {
                 wordCount += 1;
             } else {
-                // 超过3个中文字符，不算短文本
                 return false;
             }
         } else {
-            // 非中文文本：检查是否是有效的单词
-            // 排除纯标点符号的单词
-            if (/^[,.!?;:'"()\[\]{}<>@#$%^&*_+=\-|~`]+$/.test(word)) {
-                continue;
-            }
             wordCount += 1;
         }
         
-        // 如果单词数量超过3个，直接返回false
         if (wordCount > 3) {
             return false;
         }
@@ -307,9 +311,9 @@ function isShortTextNode(node: any): boolean {
             return false;
         }
         
-        // 长度检查：短文本通常不会太长
-        if (trimmedText.length > 100) {
-            return false; // 太长的文本不太可能是短文本
+        // Length check: short text usually isn't too long (based on meaningful chars, excluding symbols)
+        if (countMeaningfulChars(trimmedText) > 100) {
+            return false;
         }
         
         return true;
@@ -326,10 +330,12 @@ function checkTextSize(node: any): boolean {
     // 4. 对于非英文，少于3个字符视为过短
     const text = node.textContent || '';
     const stripped = stripWhitespace(text);
+    // Use meaningful character count (excluding symbols) for minimum length check
+    const meaningfulLen = countMeaningfulChars(stripped);
     const minLength = isAsciiOnly(stripped) ? 16 : 3;
     return text.length > 3072 ||
         (node.outerHTML && node.outerHTML.length > 4096) ||
-        stripped.length < minLength;
+        meaningfulLen < minLength;
 }
 
 // 检查节点内容是否主要为数字
