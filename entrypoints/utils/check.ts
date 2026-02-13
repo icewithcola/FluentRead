@@ -77,5 +77,7 @@ export function contentPostHandler(text: string) {
     // 替换掉<think>与</think>之间的内容
     let content = text;
     content = content.replace(/^<think>[\s\S]*?<\/think>/, "");
+    // Remove any remaining <to_translate> and </to_translate> tags from translation results
+    content = content.replace(/<\/?to_translate>/g, "");
     return content;
 }
