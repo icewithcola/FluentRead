@@ -1,6 +1,8 @@
 import {_service} from "@/entrypoints/service/_service";
 import {config} from "@/entrypoints/utils/config";
 import {CONTEXT_MENU_IDS} from "@/entrypoints/utils/constant";
+import {services} from "@/entrypoints/utils/option";
+import {method} from "@/entrypoints/utils/constant";
 
 // 翻译状态管理
 let translationStateMap = new Map<number, boolean>(); // tabId -> isTranslated
@@ -116,6 +118,11 @@ export default defineBackground({
             if (message?.type === 'CHROME_TRANSLATE_OFFSCREEN') return;
             if (message?.type === 'stream-translate') return;
 
+            // Handle non-streaming summary requests
+            if (message?.type === 'summary') {
+                return handleSummaryRequest(message.body);
+            }
+
             // Only handle translation requests (messages with 'origin' field)
             if (!message?.origin) return;
 
@@ -152,3 +159,33 @@ export default defineBackground({
         });
     }
 });
+
+/**
+ * Handle a non-streaming summary request.
+ * Uses the pre-built body from pageSummary.ts (summaryMsgTemplate),
+ * sends it to the same custom API endpoint, and returns the result text.
+ */
+async function handleSummaryRequest(body: string): Promise<{ text?: string; error?: string }> {
+    try {
+        const headers = new Headers();
+        headers.append('Content-Type', 'application/json');
+        headers.append('Authorization', `Bearer ${config.token[services.custom]}`);
+
+        const resp = await fetch(config.custom, {
+            method: method.POST,
+            headers,
+            body,
+        });
+
+        if (!resp.ok) {
+            const errorBody = await resp.text();
+            return { error: `Summary request failed: ${resp.status} ${resp.statusText} ${errorBody}` };
+        }
+
+        const result = await resp.json();
+        const text = result.choices?.[0]?.message?.content || "";
+        return { text };
+    } catch (error: any) {
+        return { error: error.message || String(error) };
+    }
+}

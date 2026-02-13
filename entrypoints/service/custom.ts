@@ -3,6 +3,7 @@ import {method} from "../utils/constant";
 import {services} from "@/entrypoints/utils/option";
 import {config} from "@/entrypoints/utils/config";
 import {contentPostHandler} from "@/entrypoints/utils/check";
+import {getCurrentPageSummary} from "@/entrypoints/utils/pageSummary";
 
 async function custom(message: any) {
 
@@ -10,10 +11,13 @@ async function custom(message: any) {
     headers.append('Content-Type', 'application/json');
     headers.append('Authorization', `Bearer ${config.token[services.custom]}`);
 
+    // Inject page summary context into translation prompt when available
+    const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
+
     const resp = await fetch(config.custom, {
         method: method.POST,
         headers: headers,
-        body: commonMsgTemplate(message.origin)
+        body: commonMsgTemplate(message.origin, pageSummary)
     });
 
     if (!resp.ok) {

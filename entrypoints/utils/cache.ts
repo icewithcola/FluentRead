@@ -1,5 +1,6 @@
 import { customModelString } from "./option";
 import { config } from "@/entrypoints/utils/config";
+import { cleanSummaryCache } from "@/entrypoints/utils/pageSummary";
 
 const prefix = "flcache_"; // fluent read cache
 
@@ -76,6 +77,8 @@ export const cache = {
         }
         // 批量删除
         keysToDelete.forEach(key => localStorage.removeItem(key));
+        // Also clean page summary caches
+        cleanSummaryCache();
     }
 };
 

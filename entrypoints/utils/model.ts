@@ -52,6 +52,7 @@ export class Config {
     animations: boolean; // 是否启用动画效果
     translationStatus: boolean; // 是否启用全文翻译进度面板
     useStream: boolean; // 是否启用流式传输（Streamable HTTP）
+    enablePageSummary: boolean; // 是否在全文翻译前总结页面内容
 
     constructor() {
         this.on = true;
@@ -96,6 +97,7 @@ export class Config {
         this.animations = true; // 默认启用动画
         this.translationStatus = true; // 默认启用翻译进度面板
         this.useStream = false; // 默认关闭流式传输
+        this.enablePageSummary = false; // 默认关闭页面总结
     }
 }
 

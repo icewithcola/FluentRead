@@ -8,6 +8,7 @@ import { detectlang, throttle } from "@/entrypoints/utils/common";
 import { getMainDomain, replaceCompatFn } from "@/entrypoints/main/compat";
 import { config } from "@/entrypoints/utils/config";
 import { translateText, translateTextStream, cancelAllTranslations } from '@/entrypoints/utils/translateApi';
+import { requestPageSummary, cancelSummaryRequest, clearCurrentPageSummary } from '@/entrypoints/utils/pageSummary';
 
 let hoverTimer: any; // 鼠标悬停计时器
 let htmlSet = new Set(); // 防抖
@@ -72,10 +73,14 @@ export function restoreOriginalContent() {
     // 7. 消除可能存在的全局样式污染
     const tempStyleElements = document.querySelectorAll('style[data-fr-temp-style]');
     tempStyleElements.forEach(el => el.remove());
+
+    // 8. Cancel any in-flight summary request and clear summary context
+    cancelSummaryRequest();
+    clearCurrentPageSummary();
 }
 
 // 自动翻译整个页面的功能
-export function autoTranslateEnglishPage() {
+export async function autoTranslateEnglishPage() {
     // 如果已经在翻译中，则返回
     if (isAutoTranslating) return;
     
@@ -96,6 +101,21 @@ export function autoTranslateEnglishPage() {
     if (!nodes.length) return;
 
     isAutoTranslating = true;
+
+    // Request page summary first if enabled (blocks translation start until summary is ready)
+    if (config.enablePageSummary && servicesType.isUseModel(config.service)) {
+        console.log('[FluentRead] Requesting page summary for translation context...');
+        try {
+            const summary = await requestPageSummary();
+            if (summary) {
+                console.log('[FluentRead] Page summary obtained, will be injected into translation prompts');
+            } else {
+                console.log('[FluentRead] Page summary skipped (empty result or too short page)');
+            }
+        } catch (error) {
+            console.warn('[FluentRead] Page summary failed, proceeding with translation without context:', error);
+        }
+    }
 
     // 创建观察器
     observer = new IntersectionObserver((entries, observer) => {

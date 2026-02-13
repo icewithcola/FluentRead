@@ -287,6 +287,19 @@
                 </div>
               </div>
 
+              <!-- 页面总结 -->
+              <div class="setting-item">
+                <div class="setting-label">
+                  翻译上下文增强
+                  <el-tooltip content="全文翻译前先总结页面关键词和背景，注入到翻译提示词中提升翻译质量" placement="top">
+                    <el-icon class="ml-1 text-gray-400"><InfoFilled /></el-icon>
+                  </el-tooltip>
+                </div>
+                <div class="setting-control">
+                  <el-switch v-model="config.enablePageSummary" inline-prompt active-text="开" inactive-text="关" size="small" :disabled="!compute.showModel"/>
+                </div>
+              </div>
+
               <!-- 动画 -->
               <div class="setting-item">
                 <div class="setting-label">动画效果</div>
