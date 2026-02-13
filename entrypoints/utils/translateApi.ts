@@ -127,4 +127,86 @@ export interface TranslateOptions {
   timeout?: number;
   /** 是否使用缓存 */
   useCache?: boolean;
-} 
+}
+
+/**
+ * Streaming translation via Port connection.
+ * Sends a translation request to background and calls onChunk for each delta received.
+ * Returns the final complete translation result.
+ *
+ * @param origin Original text
+ * @param context Context info (page title)
+ * @param onChunk Callback invoked with each accumulated text chunk
+ * @param options Translation options
+ */
+export async function translateTextStream(
+  origin: string,
+  context: string = document.title,
+  onChunk: (accumulated: string) => void,
+  options: TranslateOptions = {}
+): Promise<string> {
+  const {
+    timeout = 60000,
+    useCache = config.useCache,
+  } = options;
+
+  // Check if target language matches source
+  if (detectlang(origin.replace(/[\s\u3000]/g, '')) === config.to) {
+    return origin;
+  }
+
+  // Check cache
+  if (useCache) {
+    const cachedResult = cache.localGet(origin);
+    if (cachedResult) {
+      if (isDev) {
+        console.log('[翻译API] 流式翻译命中缓存');
+      }
+      return cachedResult;
+    }
+  }
+
+  // Increment translation count
+  config.count++;
+  storage.setItem('local:config', JSON.stringify(config));
+
+  return enqueueTranslation(async () => {
+    return new Promise<string>((resolve, reject) => {
+      const port = browser.runtime.connect({name: 'stream-translate'});
+      let timeoutId: any = null;
+
+      // Set timeout
+      timeoutId = setTimeout(() => {
+        port.disconnect();
+        reject(new Error('流式翻译请求超时'));
+      }, timeout);
+
+      port.onMessage.addListener((msg: any) => {
+        if (msg.type === 'stream-chunk') {
+          // Call onChunk with accumulated text for progressive DOM update
+          onChunk(msg.accumulated);
+        } else if (msg.type === 'stream-done') {
+          clearTimeout(timeoutId);
+          const result = msg.result;
+          if (result && useCache) {
+            cache.localSet(origin, result);
+          }
+          port.disconnect();
+          resolve(result || '');
+        } else if (msg.type === 'stream-error') {
+          clearTimeout(timeoutId);
+          port.disconnect();
+          reject(new Error(msg.error || '流式翻译失败'));
+        }
+      });
+
+      // Handle disconnection
+      port.onDisconnect.addListener(() => {
+        clearTimeout(timeoutId);
+      });
+
+      // Send translation request
+      port.postMessage({context, origin});
+    });
+  });
+}

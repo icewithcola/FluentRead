@@ -112,6 +112,9 @@ export default defineBackground({
 
         // 处理翻译请求
         browser.runtime.onMessage.addListener((message: any) => {
+            // Skip stream requests handled via Port
+            if (message?.type === 'stream-translate') return;
+
             return new Promise(async (resolve, reject) => {
                 try {
                     // 处理普通翻译请求
@@ -120,6 +123,26 @@ export default defineBackground({
                         .catch(error => reject(error)); // 失败
                 } catch (error) {
                     resolve({ success: false, error: error instanceof Error ? error.message : String(error) });
+                }
+            });
+        });
+
+        // Handle streaming translation requests via Port connection
+        browser.runtime.onConnect.addListener((port: any) => {
+            if (port.name !== 'stream-translate') return;
+
+            port.onMessage.addListener(async (message: any) => {
+                try {
+                    // Attach port to message so custom() can send chunks
+                    message._port = port;
+                    const result = await _service[config.service](message);
+                    // Send final complete result
+                    port.postMessage({type: 'stream-done', result});
+                } catch (error) {
+                    port.postMessage({
+                        type: 'stream-error',
+                        error: error instanceof Error ? error.message : String(error)
+                    });
                 }
             });
         });

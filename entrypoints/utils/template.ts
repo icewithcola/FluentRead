@@ -14,12 +14,19 @@ export function commonMsgTemplate(origin: string) {
     let user = (config.user_role[config.service] || defaultOption.user_role)
         .replace('{{to}}', config.to).replace('{{origin}}', origin);
 
-    return JSON.stringify({
+    const body: any = {
         'model': model,
         "temperature": 0.7,
         'messages': [
             {'role': 'system', 'content': system},
             {'role': 'user', 'content': user},
         ]
-    })
+    };
+
+    // Enable streaming if configured
+    if (config.useStream) {
+        body.stream = true;
+    }
+
+    return JSON.stringify(body);
 }

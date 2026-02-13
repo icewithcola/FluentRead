@@ -7,7 +7,7 @@ import { beautyHTML, grabNode, grabAllNode, LLMStandardHTML, smashTruncationStyl
 import { detectlang, throttle } from "@/entrypoints/utils/common";
 import { getMainDomain, replaceCompatFn } from "@/entrypoints/main/compat";
 import { config } from "@/entrypoints/utils/config";
-import { translateText, cancelAllTranslations } from '@/entrypoints/utils/translateApi';
+import { translateText, translateTextStream, cancelAllTranslations } from '@/entrypoints/utils/translateApi';
 
 let hoverTimer: any; // 鼠标悬停计时器
 let htmlSet = new Set(); // 防抖
@@ -256,6 +256,36 @@ function bilingualTranslate(node: any, nodeOuterHTML: any) {
 
     let origin = node.textContent;
     let spinner = insertLoadingSpinner(node);
+
+    // Streaming mode: progressively update bilingual content
+    if (config.useStream && servicesType.isCustom(config.service)) {
+        let streamNode: HTMLElement | null = null;
+        translateTextStream(origin, document.title, (accumulated: string) => {
+            // Create bilingual node on first chunk
+            if (!streamNode) {
+                spinner.remove();
+                node.classList.add('fluent-read-bilingual');
+                streamNode = document.createElement('span');
+                streamNode.classList.add('fluent-read-bilingual-content');
+                const style = options.styles.find(s => s.value === config.style && !s.disabled);
+                if (style?.class) streamNode.classList.add(style.class);
+                smashTruncationStyle(node);
+                node.appendChild(streamNode);
+            }
+            streamNode.textContent = accumulated;
+        }).then((text: string) => {
+            if (spinner.parentNode) spinner.remove();
+            htmlSet.delete(nodeOuterHTML);
+            // Final update with post-processed text
+            if (streamNode) streamNode.textContent = text;
+        }).catch((error: Error) => {
+            if (spinner.parentNode) spinner.remove();
+            if (streamNode) streamNode.remove();
+            node.classList.remove('fluent-read-bilingual');
+            insertFailedTip(node, error.toString() || "翻译失败", spinner);
+        });
+        return;
+    }
     
     // 使用队列管理的翻译API
     translateText(origin, document.title)
@@ -276,6 +306,31 @@ export function singleTranslate(node: any) {
 
     let origin = LLMStandardHTML(node);
     let spinner = insertLoadingSpinner(node);
+
+    // Streaming mode: progressively update node content
+    if (config.useStream && servicesType.isCustom(config.service)) {
+        translateTextStream(origin, document.title, (accumulated: string) => {
+            if (spinner.parentNode) spinner.remove();
+            node.innerHTML = accumulated;
+        }).then((text: string) => {
+            if (spinner.parentNode) spinner.remove();
+
+            text = beautyHTML(text);
+            if (!text || origin === text) return;
+
+            let oldOuterHtml = node.outerHTML;
+            node.innerHTML = text;
+            let newOuterHtml = node.outerHTML;
+
+            cache.localSetDual(oldOuterHtml, newOuterHtml);
+            cache.set(htmlSet, newOuterHtml, 250);
+            htmlSet.delete(oldOuterHtml);
+        }).catch((error: Error) => {
+            if (spinner.parentNode) spinner.remove();
+            insertFailedTip(node, error.toString() || "翻译失败", spinner);
+        });
+        return;
+    }
     
     // 使用队列管理的翻译API
     translateText(origin, document.title)

@@ -154,6 +154,19 @@
             <el-input v-model="config.customModel[config.service]" placeholder="输入模型名称" />
           </div>
         </div>
+
+        <!-- 流式传输开关 (仅自定义接口显示) -->
+        <div class="setting-item" v-show="compute.showCustom">
+          <div class="setting-label">
+            流式传输
+            <el-tooltip content="启用 Streamable HTTP (SSE)，适用于支持流式响应的 AI 接口" placement="top">
+              <el-icon class="ml-1 text-gray-400"><InfoFilled /></el-icon>
+            </el-tooltip>
+          </div>
+          <div class="setting-control">
+            <el-switch v-model="config.useStream" inline-prompt active-text="开" inactive-text="关" />
+          </div>
+        </div>
       </div>
 
       <!-- 交互快捷键 -->
