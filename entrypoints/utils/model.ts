@@ -53,6 +53,10 @@ export class Config {
     translationStatus: boolean; // 是否启用全文翻译进度面板
     useStream: boolean; // 是否启用流式传输（Streamable HTTP）
     enablePageSummary: boolean; // 是否在全文翻译前总结页面内容
+    summaryModel: string; // 总结功能自定义模型名称（空则使用翻译模型）
+    summaryApiKey: string; // 总结功能自定义 API Key（空则使用翻译 Key）
+    summaryApiUrl: string; // 总结功能自定义 API 地址（空则使用翻译接口地址）
+    debugMode: boolean; // 是否启用调试模式（在控制台打印详细日志）
 
     constructor() {
         this.on = true;
@@ -98,6 +102,10 @@ export class Config {
         this.translationStatus = true; // 默认启用翻译进度面板
         this.useStream = false; // 默认关闭流式传输
         this.enablePageSummary = false; // 默认关闭页面总结
+        this.summaryModel = ''; // 默认使用翻译模型
+        this.summaryApiKey = ''; // 默认使用翻译 Key
+        this.summaryApiUrl = ''; // 默认使用翻译接口地址
+        this.debugMode = false; // 默认关闭调试模式
     }
 }
 

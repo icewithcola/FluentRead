@@ -105,16 +105,27 @@ export async function autoTranslateEnglishPage() {
     // Request page summary first if enabled (blocks translation start until summary is ready)
     if (config.enablePageSummary && servicesType.isUseModel(config.service)) {
         console.log('[FluentRead] Requesting page summary for translation context...');
+        if (config.debugMode) {
+            console.log('[FluentRead Debug] autoTranslateEnglishPage - enablePageSummary:', config.enablePageSummary, '| service:', config.service, '| nodes to translate:', nodes.length);
+        }
         try {
             const summary = await requestPageSummary();
             if (summary) {
                 console.log('[FluentRead] Page summary obtained, will be injected into translation prompts');
+                if (config.debugMode) {
+                    console.log('[FluentRead Debug] Page summary result:', summary);
+                }
             } else {
                 console.log('[FluentRead] Page summary skipped (empty result or too short page)');
             }
         } catch (error) {
             console.warn('[FluentRead] Page summary failed, proceeding with translation without context:', error);
+            if (config.debugMode) {
+                console.error('[FluentRead Debug] Page summary error details:', error);
+            }
         }
+    } else if (config.debugMode) {
+        console.log('[FluentRead Debug] autoTranslateEnglishPage - page summary skipped. enablePageSummary:', config.enablePageSummary, '| isUseModel:', servicesType.isUseModel(config.service));
     }
 
     // 创建观察器

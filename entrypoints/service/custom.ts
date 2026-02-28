@@ -14,6 +14,13 @@ async function custom(message: any) {
     // Inject page summary context into translation prompt when available
     const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
 
+    if (config.debugMode) {
+        console.log('[FluentRead Debug] custom() - translating:', message.origin?.slice(0, 100), '| pageSummary injected:', !!pageSummary);
+        if (pageSummary) {
+            console.log('[FluentRead Debug] custom() - pageSummary preview:', pageSummary.slice(0, 200));
+        }
+    }
+
     const resp = await fetch(config.custom, {
         method: method.POST,
         headers: headers,
@@ -31,8 +38,52 @@ async function custom(message: any) {
     }
 
     // Non-streaming mode: parse JSON response
-    let result = await resp.json();
+    // However, the API may still return SSE stream data if config.useStream is true
+    // (e.g. when called via browser.runtime.sendMessage without a port).
+    // Detect and handle SSE responses gracefully.
+    const contentType = resp.headers.get('content-type') || '';
+    const responseText = await resp.text();
+
+    // Check if the response is SSE (text/event-stream) or starts with "data: "
+    if (contentType.includes('text/event-stream') || responseText.trimStart().startsWith('data: ')) {
+        return parseSSEText(responseText);
+    }
+
+    // Normal JSON response
+    let result = JSON.parse(responseText);
     return contentPostHandler(result.choices[0].message.content);
+}
+
+/**
+ * Parse an SSE text body (already fully read) and extract the translated content.
+ * Used when the API returns SSE stream data but we don't have a Port for real-time updates.
+ */
+function parseSSEText(text: string): string {
+    let result = "";
+    const lines = text.split("\n");
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith(":")) continue;
+        if (trimmed === "data: [DONE]") continue;
+
+        if (trimmed.startsWith("data: ")) {
+            const jsonStr = trimmed.slice(6);
+            try {
+                const chunk = JSON.parse(jsonStr);
+                const delta = chunk.choices?.[0]?.delta?.content;
+                if (delta) {
+                    result += delta;
+                }
+            } catch (e) {
+                console.warn("SSE chunk parse error:", e, jsonStr);
+            }
+        }
+    }
+
+    if (!result) {
+        throw new Error("翻译失败: SSE 响应未返回有效内容");
+    }
+    return contentPostHandler(result);
 }
 
 /**

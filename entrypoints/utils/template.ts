@@ -43,8 +43,18 @@ export function commonMsgTemplate(origin: string, pageSummary?: string) {
  * Always non-streaming since we need the full result before translations begin.
  */
 export function summaryMsgTemplate(content: string) {
-    let model = config.model[config.service] === customModelString ? config.customModel[config.service] : config.model[config.service]
+    // Use summary-specific model if configured, otherwise fall back to translation model
+    let model: string;
+    if (config.summaryModel) {
+        model = config.summaryModel;
+    } else {
+        model = config.model[config.service] === customModelString ? config.customModel[config.service] : config.model[config.service];
+    }
     model = model.replace(/（.*）/g, "");
+
+    if (config.debugMode) {
+        console.log("[FluentRead Debug] summaryMsgTemplate - model:", model, "| target language:", config.to, "| content length:", content.length);
+    }
 
     const system = "You are a professional content analyst. Your job is to extract key context from webpage content to help a translator produce more accurate translations.";
     const user = `Analyze the following webpage content. Provide a brief context summary in 1-2 sentences, then list up to 10 key terms/proper nouns with their correct translations in ${config.to}. Format your response exactly as:\nContext: <brief background>\nKey terms: <term1> = <translation1>, <term2> = <translation2>, ...\n\n${content}`;
@@ -52,11 +62,18 @@ export function summaryMsgTemplate(content: string) {
     const body: any = {
         'model': model,
         "temperature": 0.3,
+        "stream": false,
         'messages': [
             {'role': 'system', 'content': system},
             {'role': 'user', 'content': user},
         ]
     };
+
+    if (config.debugMode) {
+        console.log("[FluentRead Debug] summaryMsgTemplate - model:", model, "| stream:", false);
+        console.log("[FluentRead Debug] summaryMsgTemplate - system prompt:", system);
+        console.log("[FluentRead Debug] summaryMsgTemplate - user prompt (first 300 chars):", user.slice(0, 300) + "...");
+    }
 
     // Always non-streaming for summary since we need the full result upfront
     return JSON.stringify(body);

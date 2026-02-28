@@ -300,6 +300,43 @@
                 </div>
               </div>
 
+              <!-- 翻译上下文增强 - 自定义模型/Key/URL (仅开启时显示) -->
+              <div v-show="config.enablePageSummary && compute.showModel" class="summary-config-section">
+                <div class="setting-item">
+                  <div class="setting-label">
+                    总结接口地址
+                    <el-tooltip content="留空则使用当前翻译服务的接口地址" placement="top">
+                      <el-icon class="ml-1 text-gray-400"><InfoFilled /></el-icon>
+                    </el-tooltip>
+                  </div>
+                  <div class="setting-control">
+                    <el-input v-model="config.summaryApiUrl" placeholder="留空使用翻译接口" size="small" />
+                  </div>
+                </div>
+                <div class="setting-item">
+                  <div class="setting-label">
+                    总结模型
+                    <el-tooltip content="留空则使用当前翻译服务的模型" placement="top">
+                      <el-icon class="ml-1 text-gray-400"><InfoFilled /></el-icon>
+                    </el-tooltip>
+                  </div>
+                  <div class="setting-control">
+                    <el-input v-model="config.summaryModel" placeholder="留空使用翻译模型" size="small" />
+                  </div>
+                </div>
+                <div class="setting-item">
+                  <div class="setting-label">
+                    总结 API Key
+                    <el-tooltip content="留空则使用当前翻译服务的 API Key" placement="top">
+                      <el-icon class="ml-1 text-gray-400"><InfoFilled /></el-icon>
+                    </el-tooltip>
+                  </div>
+                  <div class="setting-control">
+                    <el-input v-model="config.summaryApiKey" type="password" show-password placeholder="留空使用翻译Key" size="small" />
+                  </div>
+                </div>
+              </div>
+
               <!-- 动画 -->
               <div class="setting-item">
                 <div class="setting-label">动画效果</div>
@@ -327,6 +364,19 @@
                 <div class="setting-label">代理地址</div>
                 <div class="setting-control">
                   <el-input v-model="config.proxy[config.service]" placeholder="无需则留空" size="small" />
+                </div>
+              </div>
+
+              <!-- 调试模式 -->
+              <div class="setting-item">
+                <div class="setting-label">
+                  调试模式
+                  <el-tooltip content="开启后在浏览器控制台输出详细调试日志，用于排查翻译和总结请求问题" placement="top">
+                    <el-icon class="ml-1 text-gray-400"><InfoFilled /></el-icon>
+                  </el-tooltip>
+                </div>
+                <div class="setting-control">
+                  <el-switch v-model="config.debugMode" inline-prompt active-text="开" inactive-text="关" size="small"/>
                 </div>
               </div>
 
@@ -875,5 +925,12 @@ const validateConfig = (configData: any): boolean => {
 
 .edit-button {
   padding: 2px;
+}
+
+.summary-config-section {
+  margin-left: 8px;
+  padding-left: 10px;
+  border-left: 2px solid var(--el-color-primary-light-7);
+  margin-bottom: 8px;
 }
 </style>

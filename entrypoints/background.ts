@@ -120,7 +120,7 @@ export default defineBackground({
 
             // Handle non-streaming summary requests
             if (message?.type === 'summary') {
-                return handleSummaryRequest(message.body);
+                return handleSummaryRequest(message.body, message.summaryApiKey, message.summaryApiUrl);
             }
 
             // Only handle translation requests (messages with 'origin' field)
@@ -165,27 +165,105 @@ export default defineBackground({
  * Uses the pre-built body from pageSummary.ts (summaryMsgTemplate),
  * sends it to the same custom API endpoint, and returns the result text.
  */
-async function handleSummaryRequest(body: string): Promise<{ text?: string; error?: string }> {
+// Debug logging helper for background script, controlled by config.debugMode
+function bgDebugLog(...args: any[]): void {
+    if (config.debugMode) console.log("[FluentRead BG Debug]", ...args);
+}
+function bgDebugError(...args: any[]): void {
+    if (config.debugMode) console.error("[FluentRead BG Debug]", ...args);
+}
+
+/**
+ * Parse retry delay (in seconds) from a 429 error response.
+ * Checks Retry-After header first, then falls back to parsing the JSON response body
+ * for retryDelay or "Please retry in Xs" patterns.
+ */
+function parseRetryAfterSeconds(resp: Response, errorBody: string): number | null {
+    // 1. Check standard Retry-After header
+    const retryAfterHeader = resp.headers.get('Retry-After');
+    if (retryAfterHeader) {
+        const seconds = Number(retryAfterHeader);
+        if (!isNaN(seconds) && seconds > 0) {
+            bgDebugLog("Parsed Retry-After header:", seconds, "seconds");
+            return seconds;
+        }
+    }
+
+    // 2. Try to parse retryDelay from JSON body (e.g. Google Gemini format: "retryDelay": "50s")
+    const retryDelayMatch = errorBody.match(/"retryDelay"\s*:\s*"(\d+)s?"/i);
+    if (retryDelayMatch) {
+        const seconds = Number(retryDelayMatch[1]);
+        if (!isNaN(seconds) && seconds > 0) {
+            bgDebugLog("Parsed retryDelay from body:", seconds, "seconds");
+            return seconds;
+        }
+    }
+
+    // 3. Try to parse "Please retry in Xs" or "Please retry in X.XXs" from the message
+    const retryInMatch = errorBody.match(/retry in\s+([\d.]+)s/i);
+    if (retryInMatch) {
+        const seconds = Math.ceil(Number(retryInMatch[1]));
+        if (!isNaN(seconds) && seconds > 0) {
+            bgDebugLog("Parsed 'retry in' from message:", seconds, "seconds");
+            return seconds;
+        }
+    }
+
+    return null;
+}
+
+async function handleSummaryRequest(
+    body: string,
+    summaryApiKey?: string,
+    summaryApiUrl?: string
+): Promise<{ text?: string; error?: string; retryAfter?: number; statusCode?: number }> {
+    bgDebugLog("handleSummaryRequest() called");
     try {
+        // Use custom summary API key/url if provided, otherwise fall back to translation settings
+        const apiKey = summaryApiKey || config.token[config.service] || config.token[services.custom];
+        const apiUrl = summaryApiUrl || config.custom;
+
+        bgDebugLog("Summary API URL:", apiUrl);
+        bgDebugLog("Summary API Key:", apiKey ? `${apiKey.slice(0, 6)}...` : "(empty)");
+        bgDebugLog("Summary request body:", body);
+
         const headers = new Headers();
         headers.append('Content-Type', 'application/json');
-        headers.append('Authorization', `Bearer ${config.token[services.custom]}`);
+        headers.append('Authorization', `Bearer ${apiKey}`);
 
-        const resp = await fetch(config.custom, {
+        const resp = await fetch(apiUrl, {
             method: method.POST,
             headers,
             body,
         });
 
+        bgDebugLog("Summary API response status:", resp.status, resp.statusText);
+
         if (!resp.ok) {
             const errorBody = await resp.text();
+            bgDebugError("Summary API error response body:", errorBody);
+
+            // For 429 rate limit errors, extract retry delay and pass it back
+            if (resp.status === 429) {
+                const retryAfter = parseRetryAfterSeconds(resp, errorBody);
+                bgDebugLog("429 Rate Limited. retryAfter:", retryAfter, "seconds");
+                return {
+                    error: `Summary request failed: ${resp.status} ${resp.statusText} ${errorBody}`,
+                    retryAfter: retryAfter ?? undefined,
+                    statusCode: 429,
+                };
+            }
+
             return { error: `Summary request failed: ${resp.status} ${resp.statusText} ${errorBody}` };
         }
 
         const result = await resp.json();
+        bgDebugLog("Summary API raw JSON response:", JSON.stringify(result));
         const text = result.choices?.[0]?.message?.content || "";
+        bgDebugLog("Summary extracted text:", text);
         return { text };
     } catch (error: any) {
+        bgDebugError("Summary fetch exception:", error.message, error.stack);
         return { error: error.message || String(error) };
     }
 }
