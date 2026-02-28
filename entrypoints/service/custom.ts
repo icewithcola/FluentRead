@@ -3,7 +3,6 @@ import {method} from "../utils/constant";
 import {services} from "@/entrypoints/utils/option";
 import {config} from "@/entrypoints/utils/config";
 import {contentPostHandler} from "@/entrypoints/utils/check";
-import {getCurrentPageSummary} from "@/entrypoints/utils/pageSummary";
 
 async function custom(message: any) {
 
@@ -11,8 +10,8 @@ async function custom(message: any) {
     headers.append('Content-Type', 'application/json');
     headers.append('Authorization', `Bearer ${config.token[services.custom]}`);
 
-    // Inject page summary context into translation prompt when available
-    const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
+    // Read page summary from message (passed from content script where it was generated)
+    const pageSummary = config.enablePageSummary ? (message.pageSummary || undefined) : undefined;
 
     if (config.debugMode) {
         console.log('[FluentRead Debug] custom() - translating:', message.origin?.slice(0, 100), '| pageSummary injected:', !!pageSummary);

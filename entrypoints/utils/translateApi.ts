@@ -9,6 +9,7 @@ import { config } from './config';
 import { cache } from './cache';
 import { detectlang } from './common';
 import { storage } from '@wxt-dev/storage';
+import { getCurrentPageSummary } from './pageSummary';
 
 // 调试相关
 const isDev = process.env.NODE_ENV === 'development';
@@ -57,8 +58,10 @@ export async function translateText(origin: string, context: string = document.t
     const translationTask = async (retryCount: number = 0): Promise<string> => {
       try {
         // 发送翻译请求给background脚本处理
+        // Always call getCurrentPageSummary(); it returns "" if not ready yet
+        const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
         const result = await Promise.race([
-          browser.runtime.sendMessage({ context, origin }),
+          browser.runtime.sendMessage({ context, origin, pageSummary }),
           new Promise<never>((_, reject) => 
             setTimeout(() => reject(new Error('翻译请求超时')), timeout)
           )
@@ -205,8 +208,9 @@ export async function translateTextStream(
         clearTimeout(timeoutId);
       });
 
-      // Send translation request
-      port.postMessage({context, origin});
+      // Send translation request with page summary context from content script
+      const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
+      port.postMessage({context, origin, pageSummary});
     });
   });
 }
