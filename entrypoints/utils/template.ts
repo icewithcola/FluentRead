@@ -1,6 +1,7 @@
 // 消息模板工具
 import {customModelString, defaultOption} from "./option";
 import {config} from "@/entrypoints/utils/config";
+import {isCantonese} from "./common";
 
 // openai 格式的消息模板（通用模板）
 // pageSummary: optional page summary context to inject into the prompt for better translation
@@ -14,6 +15,11 @@ export function commonMsgTemplate(origin: string, pageSummary?: string) {
     let system = config.system_role[config.service] || defaultOption.system_role;
     let user = (config.user_role[config.service] || defaultOption.user_role)
         .replace('{{to}}', config.to).replace('{{origin}}', origin);
+
+    // 如果是粤语，注入专属的粤语理解与意译Prompt
+    if (isCantonese(origin)) {
+        system += `\n\nNote: The source text is written in Cantonese (粤语/广东话) and may contain Cantonese slang, colloquial grammar, and internet abbreviations (e.g. 'po' means post/帖子, '劈' means drinking/chugging, etc.). Do NOT perform a word-for-word literal translation. Instead, fully understand the meaning, slang, and context of the Cantonese text, and translate it into standard, natural, and idiomatic ${config.to}.`;
+    }
 
     // Inject page summary context into the system prompt if available
     if (pageSummary) {
