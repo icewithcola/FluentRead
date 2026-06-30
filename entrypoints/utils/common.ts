@@ -14,8 +14,47 @@ export function throttle(fn: (...args: any[]) => void, interval: number) {
     };
 }
 
+// 判断是否为粤语
+export function isCantonese(text: string): boolean {
+    // 1. 至少要包含2个字符才进行判定，避免单字误判
+    if (text.length < 2) {
+        return false;
+    }
+
+    // 2. 检查是否含有非常独特的粤语专属字
+    const uniqueRegex = /[啲哋嚟咁喺咗搵嘢啱冇嗰攞㗎啫瞓諗谂氹嘥慳孭唞係咩]/;
+    if (uniqueRegex.test(text)) {
+        return true;
+    }
+
+    // 3. 检查是否含有非常独特的粤语词汇
+    const cantoneseWords = [
+        '边度', '邊度', '边个', '邊個', '点解', '點解', 
+        '几时', '幾時', '系咪', '係咪', '呢排', '几多', 
+        '幾多', '唔好', '对唔住', '對唔住', '唔知', 
+        '唔系', '唔係', '埋单', '埋單'
+    ];
+    if (cantoneseWords.some(word => text.includes(word))) {
+        return true;
+    }
+
+    // 4. 检查是否含有多个粤语常用字（如至少2个）以避免单字在普通话中的误判
+    const ambiguousRegex = /[唔睇佢乜咪畀嬲靓叻温晒]/g;
+    const matches = text.match(ambiguousRegex);
+    if (matches && matches.length >= 2) {
+        return true;
+    }
+
+    return false;
+}
+
 // 输出标准的语言类型，franc 只返回最可信的结果，francAll 返回所有结果并包含确信度
 export function detectlang(origin: string): string {
+    // 优先检测是否为粤语
+    if (isCantonese(origin)) {
+        return "yue";
+    }
+
     const find = franc(origin, {minLength: 0});
     // 返回对应的标准语言代码
     switch (find) {

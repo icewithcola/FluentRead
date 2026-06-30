@@ -96,6 +96,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { translateText } from '@/entrypoints/utils/translateApi';
 import { config } from '@/entrypoints/utils/config';
+import { isCantonese } from '@/entrypoints/utils/common';
 
 // 状态变量
 const selectedText = ref('');
@@ -424,6 +425,9 @@ const stopAudio = (e?: Event) => {
 // 检测语言
 const detectLanguage = (text: string): string => {
   // 简单的语言检测，可根据实际需求完善
+  // 优先检测是否为粤语
+  if (isCantonese(text)) return 'zh-HK';
+
   // 检测是否包含中文字符
   const hasChinese = /[\u4e00-\u9fa5]/.test(text);
   if (hasChinese) return 'zh-CN';
