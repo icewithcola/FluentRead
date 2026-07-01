@@ -65,9 +65,9 @@ function handleRetryClick(node: HTMLElement, wrapper: HTMLElement) {
 
     // 根据当前配置的翻译模式决定使用哪种翻译方式
     if (config.display === styles.bilingualTranslation) {
-      handleBilingualTranslation(node, false);
+      handleBilingualTranslation(node, false, true);
     } else {
-      handleSingleTranslation(node, false);
+      handleSingleTranslation(node, false, true);
     }
   };
 }

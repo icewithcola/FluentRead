@@ -29,6 +29,7 @@ export async function translateText(origin: string, context: string = document.t
     retryDelay = 1000, 
     timeout = 45000,
     useCache = config.useCache,
+    bypassCacheRead = false,
   } = options;
 
   // 如果目标语言与当前文本语言相同，直接返回原文
@@ -37,7 +38,7 @@ export async function translateText(origin: string, context: string = document.t
   }
 
   // 检查缓存
-  if (useCache) {
+  if (useCache && !bypassCacheRead) {
     const cachedResult = cache.localGet(origin);
     if (cachedResult) {
       if (isDev) {
@@ -66,6 +67,19 @@ export async function translateText(origin: string, context: string = document.t
             setTimeout(() => reject(new Error('翻译请求超时')), timeout)
           )
         ]) as string;
+
+        // 检查返回结果是否是错误对象
+        if (result && typeof result === 'object') {
+          const resObj = result as any;
+          if (resObj.success === false || resObj.error) {
+            throw new Error(resObj.error || '翻译失败');
+          }
+        }
+
+        // 确保结果是有效的字符串，并且不包含 [object Object]
+        if (typeof result !== 'string' || result.includes('[object Object]')) {
+          throw new Error('翻译返回了无效的响应格式');
+        }
 
         // 如果翻译结果为空或与原文完全相同，直接返回空
         if (!result || result === origin) {
@@ -130,6 +144,8 @@ export interface TranslateOptions {
   timeout?: number;
   /** 是否使用缓存 */
   useCache?: boolean;
+  /** 是否跳过读取缓存 */
+  bypassCacheRead?: boolean;
 }
 
 /**
@@ -151,6 +167,7 @@ export async function translateTextStream(
   const {
     timeout = 60000,
     useCache = config.useCache,
+    bypassCacheRead = false,
   } = options;
 
   // Check if target language matches source
@@ -159,7 +176,7 @@ export async function translateTextStream(
   }
 
   // Check cache
-  if (useCache) {
+  if (useCache && !bypassCacheRead) {
     const cachedResult = cache.localGet(origin);
     if (cachedResult) {
       if (isDev) {
@@ -177,11 +194,26 @@ export async function translateTextStream(
     return new Promise<string>((resolve, reject) => {
       const port = browser.runtime.connect({name: 'stream-translate'});
       let timeoutId: any = null;
+      let settled = false;
+
+      const safeResolve = (val: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve(val);
+      };
+
+      const safeReject = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        reject(err);
+      };
 
       // Set timeout
       timeoutId = setTimeout(() => {
         port.disconnect();
-        reject(new Error('流式翻译请求超时'));
+        safeReject(new Error('流式翻译请求超时'));
       }, timeout);
 
       port.onMessage.addListener((msg: any) => {
@@ -189,23 +221,41 @@ export async function translateTextStream(
           // Call onChunk with accumulated text for progressive DOM update
           onChunk(msg.accumulated);
         } else if (msg.type === 'stream-done') {
-          clearTimeout(timeoutId);
           const result = msg.result;
+
+          // Check if result is an error object
+          if (result && typeof result === 'object') {
+            const resObj = result as any;
+            if (resObj.success === false || resObj.error) {
+              port.disconnect();
+              safeReject(new Error(resObj.error || '流式翻译失败'));
+              return;
+            }
+          }
+
+          // Ensure result is a valid string and doesn't contain [object Object]
+          if (typeof result !== 'string' || result.includes('[object Object]')) {
+            port.disconnect();
+            safeReject(new Error('流式翻译返回了无效的响应格式'));
+            return;
+          }
+
           if (result && useCache) {
             cache.localSet(origin, result);
           }
           port.disconnect();
-          resolve(result || '');
+          safeResolve(result || '');
         } else if (msg.type === 'stream-error') {
-          clearTimeout(timeoutId);
           port.disconnect();
-          reject(new Error(msg.error || '流式翻译失败'));
+          safeReject(new Error(msg.error || '流式翻译失败'));
         }
       });
 
       // Handle disconnection
       port.onDisconnect.addListener(() => {
-        clearTimeout(timeoutId);
+        if (!settled) {
+          safeReject(new Error('流式翻译连接意外断开'));
+        }
       });
 
       // Send translation request with page summary context from content script

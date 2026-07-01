@@ -29,6 +29,11 @@ export const cache = {
         // 如果禁用缓存，则不执行任何操作
         if (!config.useCache) return;
         
+        // 确保 key 和 value 是非空字符串，且不包含 [object Object] 错误指示
+        if (typeof key !== 'string' || typeof value !== 'string') return;
+        if (!key.trim() || !value.trim()) return;
+        if (key.includes('[object Object]') || value.includes('[object Object]')) return;
+        
         localStorage.setItem(buildKey(key), value);
     },
 

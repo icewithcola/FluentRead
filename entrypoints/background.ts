@@ -126,16 +126,12 @@ export default defineBackground({
             // Only handle translation requests (messages with 'origin' field)
             if (!message?.origin) return;
 
-            return new Promise(async (resolve, reject) => {
-                try {
-                    // 处理普通翻译请求
-                    _service[config.service](message)
-                        .then(resp => resolve(resp))    // 成功
-                        .catch(error => reject(error)); // 失败
-                } catch (error) {
-                    resolve({ success: false, error: error instanceof Error ? error.message : String(error) });
-                }
-            });
+            // 处理普通翻译请求
+            try {
+                return _service[config.service](message);
+            } catch (error) {
+                return Promise.reject(error);
+            }
         });
 
         // Handle streaming translation requests via Port connection

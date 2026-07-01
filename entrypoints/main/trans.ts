@@ -220,7 +220,7 @@ export function handleTranslation(mouseX: number, mouseY: number, delayTime: num
 }
 
 // 双语翻译
-export function handleBilingualTranslation(node: any, slide: boolean) {
+export function handleBilingualTranslation(node: any, slide: boolean, forceBypassCache: boolean = false) {
     let nodeOuterHTML = node.outerHTML;
     // 如果已经翻译过，250ms 后删除翻译结果
     let bilingualNode = searchClassName(node, 'fluent-read-bilingual');
@@ -241,7 +241,7 @@ export function handleBilingualTranslation(node: any, slide: boolean) {
     }
 
     // 检查是否有缓存
-    let cached = cache.localGet(node.textContent);
+    let cached = forceBypassCache ? null : cache.localGet(node.textContent);
     if (cached) {
         let spinner = insertLoadingSpinner(node, true);
         setTimeout(() => {
@@ -253,13 +253,13 @@ export function handleBilingualTranslation(node: any, slide: boolean) {
     }
 
     // 翻译
-    bilingualTranslate(node, nodeOuterHTML);
+    bilingualTranslate(node, nodeOuterHTML, forceBypassCache);
 }
 
 // 单语翻译
-export function handleSingleTranslation(node: any, slide: boolean) {
+export function handleSingleTranslation(node: any, slide: boolean, forceBypassCache: boolean = false) {
     let nodeOuterHTML = node.outerHTML;
-    let outerHTMLCache = cache.localGet(node.outerHTML);
+    let outerHTMLCache = forceBypassCache ? null : cache.localGet(node.outerHTML);
 
 
     if (outerHTMLCache) {
@@ -278,11 +278,11 @@ export function handleSingleTranslation(node: any, slide: boolean) {
         return;
     }
 
-    singleTranslate(node);
+    singleTranslate(node, forceBypassCache);
 }
 
 
-function bilingualTranslate(node: any, nodeOuterHTML: any) {
+function bilingualTranslate(node: any, nodeOuterHTML: any, forceBypassCache: boolean = false) {
     if (detectlang(node.textContent.replace(/[\s\u3000]/g, '')) === config.to) return;
 
     let origin = node.textContent;
@@ -304,7 +304,7 @@ function bilingualTranslate(node: any, nodeOuterHTML: any) {
                 node.appendChild(streamNode);
             }
             streamNode.textContent = accumulated;
-        }).then((text: string) => {
+        }, { bypassCacheRead: forceBypassCache }).then((text: string) => {
             if (spinner.parentNode) spinner.remove();
             htmlSet.delete(nodeOuterHTML);
             // Final update with post-processed text
@@ -319,7 +319,7 @@ function bilingualTranslate(node: any, nodeOuterHTML: any) {
     }
     
     // 使用队列管理的翻译API
-    translateText(origin, document.title)
+    translateText(origin, document.title, { bypassCacheRead: forceBypassCache })
         .then((text: string) => {
             spinner.remove();
             htmlSet.delete(nodeOuterHTML);
@@ -332,7 +332,7 @@ function bilingualTranslate(node: any, nodeOuterHTML: any) {
 }
 
 
-export function singleTranslate(node: any) {
+export function singleTranslate(node: any, forceBypassCache: boolean = false) {
     if (detectlang(node.textContent.replace(/[\s\u3000]/g, '')) === config.to) return;
 
     let origin = LLMStandardHTML(node);
@@ -343,7 +343,7 @@ export function singleTranslate(node: any) {
         translateTextStream(origin, document.title, (accumulated: string) => {
             if (spinner.parentNode) spinner.remove();
             node.innerHTML = accumulated;
-        }).then((text: string) => {
+        }, { bypassCacheRead: forceBypassCache }).then((text: string) => {
             if (spinner.parentNode) spinner.remove();
 
             text = beautyHTML(text);
@@ -364,7 +364,7 @@ export function singleTranslate(node: any) {
     }
     
     // 使用队列管理的翻译API
-    translateText(origin, document.title)
+    translateText(origin, document.title, { bypassCacheRead: forceBypassCache })
         .then((text: string) => {
             spinner.remove();
             
