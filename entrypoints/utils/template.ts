@@ -13,8 +13,13 @@ export function commonMsgTemplate(origin: string, pageSummary?: string) {
     model = model.replace(/（.*）/g, "");
 
     let system = config.system_role[config.service] || defaultOption.system_role;
+
+    // 规范化原文：将 HTML 缩进产生的连续空白（换行/制表符/连续空格）折叠为单个空格，
+    // 并去除首尾空白，避免这些无关空白被模型原样带入译文内容
+    const cleanedOrigin = origin.replace(/\s+/g, ' ').trim();
+
     let user = (config.user_role[config.service] || defaultOption.user_role)
-        .replace('{{to}}', config.to).replace('{{origin}}', origin);
+        .replace('{{to}}', config.to).replace('{{origin}}', cleanedOrigin);
 
     // 如果是粤语，注入专属的粤语理解与意译Prompt
     if (isCantonese(origin)) {

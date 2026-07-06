@@ -3,7 +3,7 @@ import { cache } from "../utils/cache";
 import { options, servicesType } from "../utils/option";
 import { insertFailedTip, insertLoadingSpinner } from "../utils/icon";
 import { styles } from "@/entrypoints/utils/constant";
-import { beautyHTML, grabNode, grabAllNode, LLMStandardHTML, smashTruncationStyle } from "@/entrypoints/main/dom";
+import { beautyHTML, grabNode, grabAllNode, LLMStandardHTML, smashTruncationStyle, isNumericContent } from "@/entrypoints/main/dom";
 import { detectlang, throttle } from "@/entrypoints/utils/common";
 import { getMainDomain, replaceCompatFn } from "@/entrypoints/main/compat";
 import { config } from "@/entrypoints/utils/config";
@@ -389,6 +389,8 @@ export function singleTranslate(node: any, forceBypassCache: boolean = false) {
 
 export const handleBtnTranslation = throttle((node: any) => {
     let origin = node.innerText;
+    // 数字映射：纯数字（仅 ASCII 阿拉伯数字）不翻译，避免提交 "6" 等原始数字
+    if (isNumericContent(origin)) return;
     let rs = cache.localGet(origin);
     if (rs) {
         node.innerText = rs;
