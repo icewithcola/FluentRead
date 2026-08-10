@@ -79,5 +79,6 @@ export function contentPostHandler(text: string) {
     content = content.replace(/^<think>[\s\S]*?<\/think>/, "");
     // Remove any remaining <to_translate> and </to_translate> tags from translation results
     content = content.replace(/<\/?to_translate>/g, "");
-    return content;
+    // 去除模型可能原样输出的首尾空白，避免空白进入译文内容
+    return content.trim();
 }

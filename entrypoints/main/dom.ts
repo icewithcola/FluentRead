@@ -389,7 +389,7 @@ function isUserIdentifier(text: string): boolean {
     if (/^u\/\w+/.test(trimmedText)) return true; // Reddit格式：u/username
 
     // 检查是否为x.com或twitter.com的ID格式
-    if (/^id@https?:\/\/(x\.com|twitter\.com)\/[\w-]+\/status\/\d+/.test(trimmedText)) return true;
+    if (/^id@https?:\/\/(x\.com|twitter\.com)\/[\w-]+\/status\/[0-9]+/.test(trimmedText)) return true;
 
     // 检查是否包含"关注"相关内容
     if (/关注.*\w+/.test(trimmedText) || /Follow.*\w+/.test(trimmedText)) return true;
@@ -422,8 +422,15 @@ function isUserIdentifier(text: string): boolean {
  * 13. #数字 格式的
  * 
  * 这些格式的数字和用户标识符通常不需要翻译，保持原样更有利于页面理解。
+ *
+ * 数字映射规则（只对纯数字生效）：
+ * - 仅使用 ASCII 阿拉伯数字 [0-9] 判断数字。例如 "6" 视为纯数字，不翻译。
+ * - 非阿拉伯数字脚本（如阿拉伯-印度数字 ٦、天城文数字 ६）不视为数字，
+ *   应当被翻译，因此不会被此函数拦截。
+ * 注意：不要使用 \d，因为 \d 在 JS 中匹配全部 Unicode Decimal_Number，
+ * 会把非阿拉伯数字脚本也当成数字而错误地跳过翻译。
  */
-function isNumericContent(text: string): boolean {
+export function isNumericContent(text: string): boolean {
     if (!text || typeof text !== 'string') return false;
 
     // Strip all Unicode whitespace characters
@@ -434,48 +441,48 @@ function isNumericContent(text: string): boolean {
     if (isUserIdentifier(trimmedText)) return true;
 
     // 如果包含多个单词，则不视为纯数字内容
-    if (/\s+/.test(trimmedText.replace(/[\d,.\-%+]/g, ''))) return false;
+    if (/\s+/.test(trimmedText.replace(/[0-9,.\-%+]/g, ''))) return false;
 
-    // 检查是否为纯数字
-    if (/^-?\d+$/.test(trimmedText)) return true;
+    // 检查是否为纯数字（仅 ASCII 阿拉伯数字）
+    if (/^-?[0-9]+$/.test(trimmedText)) return true;
 
     // 检查是否为标准数字格式：带逗号的数字 (例如: 1,234,567)
-    if (/^-?(\d{1,3}(,\d{3})+)$/.test(trimmedText)) return true;
+    if (/^-?([0-9]{1,3}(,[0-9]{3})+)$/.test(trimmedText)) return true;
 
     // 检查是否为范围数字 (例如: 1-123)
-    if (/^\d+\s*[-~]\s*\d+$/.test(trimmedText)) return true;
+    if (/^[0-9]+\s*[-~]\s*[0-9]+$/.test(trimmedText)) return true;
 
     // 检查是否为小数
-    if (/^-?\d+\.\d+$/.test(trimmedText)) return true;
+    if (/^-?[0-9]+\.[0-9]+$/.test(trimmedText)) return true;
 
     // 检查是否为百分比
-    if (/^-?\d+(\.\d+)?%$/.test(trimmedText)) return true;
+    if (/^-?[0-9]+(\.[0-9]+)?%$/.test(trimmedText)) return true;
 
     // 检查是否为科学计数法 (例如: 1.23e+4)
-    if (/^-?\d+(\.\d+)?(e[-+]\d+)?$/i.test(trimmedText)) return true;
+    if (/^-?[0-9]+(\.[0-9]+)?(e[-+][0-9]+)?$/i.test(trimmedText)) return true;
 
     // 检查是否为带货币符号的金额 (例如: $123.45, €123, ¥123)
-    if (/^[$€¥£₹₽₩]?\s*-?\d+(,\d{3})*(\.\d+)?$/.test(trimmedText)) return true;
+    if (/^[$€¥£₹₽₩]?\s*-?[0-9]+(,[0-9]{3})*(\.[0-9]+)?$/.test(trimmedText)) return true;
 
     // 检查是否为日期时间格式 (仅考虑常见的数字日期格式)
     // 匹配 YYYY-MM-DD, YYYY/MM/DD, DD-MM-YYYY, DD/MM/YYYY, MM-DD-YYYY, MM/DD/YYYY
-    if (/^(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4}|\d{1,2}[-/]\d{1,2}[-/]\d{1,2})$/.test(trimmedText)) return true;
+    if (/^([0-9]{4}[-/][0-9]{1,2}[-/][0-9]{1,2}|[0-9]{1,2}[-/][0-9]{1,2}[-/][0-9]{4}|[0-9]{1,2}[-/][0-9]{1,2}[-/][0-9]{1,2})$/.test(trimmedText)) return true;
 
     // 匹配时间格式 HH:MM:SS, HH:MM
-    if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(trimmedText)) return true;
+    if (/^[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?$/.test(trimmedText)) return true;
 
     // 匹配版本号 (例如: 1.0.0, 2.3.5-beta)
-    if (/^\d+(\.\d+){1,3}(-[a-zA-Z0-9]+)?$/.test(trimmedText)) return true;
+    if (/^[0-9]+(\.[0-9]+){1,3}(-[a-zA-Z0-9]+)?$/.test(trimmedText)) return true;
 
     // 匹配社交媒体的ID格式
-    if (/^id@https?:\/\/(x\.com|twitter\.com)\/[\w-]+\/status\/\d+/.test(trimmedText)) return true;
+    if (/^id@https?:\/\/(x\.com|twitter\.com)\/[\w-]+\/status\/[0-9]+/.test(trimmedText)) return true;
 
     // 匹配常见的数字ID格式
-    if (/^ID[:：]?\s*\d+$/.test(trimmedText)) return true;
-    if (/^No[\.:]?\s*\d+$/i.test(trimmedText)) return true;
+    if (/^ID[:：]?\s*[0-9]+$/.test(trimmedText)) return true;
+    if (/^No[\.:]?\s*[0-9]+$/i.test(trimmedText)) return true;
 
     // #数字 格式的
-    if (/^#[\d]+$/.test(trimmedText)) return true;
+    if (/^#[0-9]+$/.test(trimmedText)) return true;
 
     return false;
 }
@@ -522,6 +529,8 @@ function handleFirstLineText(node: any): boolean {
     let child = node.firstChild;
     while (child) {
         if (child.nodeType === Node.TEXT_NODE && child.textContent && stripWhitespace(child.textContent)) {
+            // 数字映射：纯数字（仅 ASCII 阿拉伯数字）不翻译，避免提交 "6" 等原始数字
+            if (isNumericContent(child.textContent)) return false;
             browser.runtime.sendMessage({
                 context: document.title,
                 origin: child.textContent
