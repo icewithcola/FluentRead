@@ -28,12 +28,12 @@
           <span class="font-bold">启用 Fluent Read</span>
         </div>
         <div class="setting-control">
-          <el-switch 
-            v-model="config.on" 
-            inline-prompt 
-            active-text="开" 
-            inactive-text="关" 
-            @change="handlePluginStateChange" 
+          <el-switch
+            v-model="config.on"
+            inline-prompt
+            active-text="开"
+            inactive-text="关"
+            @change="handlePluginStateChange"
             size="large"
           />
         </div>
@@ -47,17 +47,21 @@
 
     <!-- 启用状态下的设置 -->
     <div v-show="config.on">
-      
       <!-- 基础设置 -->
       <div class="card">
         <div class="card-header">基础设置</div>
-        
+
         <!-- 翻译模式 -->
         <div class="setting-item">
           <div class="setting-label">翻译模式</div>
           <div class="setting-control">
             <el-select v-model="config.display" placeholder="选择模式" size="default">
-              <el-option v-for="item in options.display" :key="item.value" :label="item.label" :value="item.value" />
+              <el-option
+                v-for="item in options.display"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
             </el-select>
           </div>
         </div>
@@ -73,7 +77,12 @@
           <div class="setting-control">
             <el-select v-model="config.style" placeholder="选择样式">
               <el-option-group v-for="group in styleGroups" :key="group.value" :label="group.label">
-                <el-option v-for="item in group.options" :key="item.value" :label="item.label" :value="item.value" />
+                <el-option
+                  v-for="item in group.options"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
               </el-option-group>
             </el-select>
           </div>
@@ -84,7 +93,12 @@
           <div class="setting-label">目标语言</div>
           <div class="setting-control">
             <el-select v-model="config.to" placeholder="选择语言" filterable>
-              <el-option v-for="item in options.to" :key="item.value" :label="item.label" :value="item.value" />
+              <el-option
+                v-for="item in options.to"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
             </el-select>
           </div>
         </div>
@@ -93,7 +107,7 @@
       <!-- 翻译服务 -->
       <div class="card">
         <div class="card-header">翻译服务</div>
-        
+
         <!-- 服务选择 -->
         <div class="setting-item">
           <div class="setting-label">
@@ -104,13 +118,13 @@
           </div>
           <div class="setting-control">
             <el-select v-model="config.service" placeholder="选择服务">
-              <el-option 
-                v-for="item in compute.filteredServices" 
+              <el-option
+                v-for="item in compute.filteredServices"
                 :key="item.value"
-                :label="item.label" 
-                :value="item.value" 
+                :label="item.label"
+                :value="item.value"
                 :disabled="item.disabled"
-                :class="{ 'select-divider': item.disabled }" 
+                :class="{ 'select-divider': item.disabled }"
               />
             </el-select>
           </div>
@@ -120,11 +134,11 @@
         <div class="setting-item" v-show="compute.showToken">
           <div class="setting-label">访问令牌</div>
           <div class="setting-control">
-            <el-input 
-              v-model="config.token[config.service]" 
-              type="password" 
-              show-password 
-              placeholder="API Key / Token" 
+            <el-input
+              v-model="config.token[config.service]"
+              type="password"
+              show-password
+              placeholder="API Key / Token"
             />
           </div>
         </div>
@@ -141,7 +155,13 @@
         <div class="setting-item" v-show="compute.showModel">
           <div class="setting-label">模型</div>
           <div class="setting-control">
-            <el-select v-model="config.model[config.service]" placeholder="选择模型" filterable allow-create default-first-option>
+            <el-select
+              v-model="config.model[config.service]"
+              placeholder="选择模型"
+              filterable
+              allow-create
+              default-first-option
+            >
               <el-option v-for="item in compute.model" :key="item" :label="item" :value="item" />
             </el-select>
           </div>
@@ -149,7 +169,9 @@
 
         <!-- 自定义模型名称 -->
         <div class="setting-item" v-show="compute.showCustomModel">
-          <div class="setting-label">{{ config.service === 'doubao' ? '接入点 ID' : '模型名称' }}</div>
+          <div class="setting-label">
+            {{ config.service === 'doubao' ? '接入点 ID' : '模型名称' }}
+          </div>
           <div class="setting-control">
             <el-input v-model="config.customModel[config.service]" placeholder="输入模型名称" />
           </div>
@@ -159,12 +181,20 @@
         <div class="setting-item" v-show="compute.showCustom">
           <div class="setting-label">
             流式传输
-            <el-tooltip content="启用 Streamable HTTP (SSE)，适用于支持流式响应的 AI 接口" placement="top">
+            <el-tooltip
+              content="启用 Streamable HTTP (SSE)，适用于支持流式响应的 AI 接口"
+              placement="top"
+            >
               <el-icon class="ml-1 text-gray-400"><InfoFilled /></el-icon>
             </el-tooltip>
           </div>
           <div class="setting-control">
-            <el-switch v-model="config.useStream" inline-prompt active-text="开" inactive-text="关" />
+            <el-switch
+              v-model="config.useStream"
+              inline-prompt
+              active-text="开"
+              inactive-text="关"
+            />
           </div>
         </div>
       </div>
@@ -182,19 +212,32 @@
             </el-tooltip>
           </div>
           <div class="setting-control column-control">
-            <el-select 
-              v-model="config.hotkey" 
-              placeholder="选择按键" 
-              size="small" 
+            <el-select
+              v-model="config.hotkey"
+              placeholder="选择按键"
+              size="small"
               @change="handleMouseHotkeyChange"
             >
-              <el-option v-for="item in options.keys" :key="item.value" :label="item.label" :value="item.value" :disabled="item.disabled" />
+              <el-option
+                v-for="item in options.keys"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+                :disabled="item.disabled"
+              />
             </el-select>
-            
+
             <div v-if="config.hotkey === 'custom'" class="custom-hotkey-display mt-1">
-              <span class="hotkey-text" v-if="config.customHotkey">{{ getCustomMouseHotkeyDisplayName() }}</span>
+              <span class="hotkey-text" v-if="config.customHotkey">{{
+                getCustomMouseHotkeyDisplayName()
+              }}</span>
               <span class="hotkey-text placeholder-text" v-else>未设置</span>
-              <el-button size="small" type="text" @click="openCustomMouseHotkeyDialog" class="edit-button">
+              <el-button
+                size="small"
+                type="text"
+                @click="openCustomMouseHotkeyDialog"
+                class="edit-button"
+              >
                 <el-icon><Edit /></el-icon>
               </el-button>
             </div>
@@ -210,19 +253,31 @@
             </el-tooltip>
           </div>
           <div class="setting-control column-control">
-            <el-select 
-              v-model="config.floatingBallHotkey" 
-              placeholder="选择按键" 
-              size="small" 
+            <el-select
+              v-model="config.floatingBallHotkey"
+              placeholder="选择按键"
+              size="small"
               @change="handleHotkeyChange"
             >
-              <el-option v-for="item in options.floatingBallHotkeys" :key="item.value" :label="item.label" :value="item.value" />
+              <el-option
+                v-for="item in options.floatingBallHotkeys"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
             </el-select>
 
             <div v-if="config.floatingBallHotkey === 'custom'" class="custom-hotkey-display mt-1">
-              <span class="hotkey-text" v-if="config.customFloatingBallHotkey">{{ getCustomHotkeyDisplayName() }}</span>
+              <span class="hotkey-text" v-if="config.customFloatingBallHotkey">{{
+                getCustomHotkeyDisplayName()
+              }}</span>
               <span class="hotkey-text placeholder-text" v-else>未设置</span>
-              <el-button size="small" type="text" @click="openCustomHotkeyDialog" class="edit-button">
+              <el-button
+                size="small"
+                type="text"
+                @click="openCustomHotkeyDialog"
+                class="edit-button"
+              >
                 <el-icon><Edit /></el-icon>
               </el-button>
             </div>
@@ -251,14 +306,19 @@
                 <el-icon><Setting /></el-icon> 高级选项
               </div>
             </template>
-            
+
             <div class="advanced-content">
               <!-- 主题设置 -->
               <div class="setting-item">
                 <div class="setting-label">界面主题</div>
                 <div class="setting-control">
                   <el-select v-model="config.theme" size="small">
-                    <el-option v-for="item in options.theme" :key="item.value" :label="item.label" :value="item.value" />
+                    <el-option
+                      v-for="item in options.theme"
+                      :key="item.value"
+                      :label="item.label"
+                      :value="item.value"
+                    />
                   </el-select>
                 </div>
               </div>
@@ -267,7 +327,13 @@
               <div class="setting-item">
                 <div class="setting-label">缓存翻译结果</div>
                 <div class="setting-control">
-                  <el-switch v-model="config.useCache" inline-prompt active-text="开" inactive-text="关" size="small"/>
+                  <el-switch
+                    v-model="config.useCache"
+                    inline-prompt
+                    active-text="开"
+                    inactive-text="关"
+                    size="small"
+                  />
                 </div>
               </div>
 
@@ -275,7 +341,13 @@
               <div class="setting-item">
                 <div class="setting-label">全文翻译悬浮球</div>
                 <div class="setting-control">
-                  <el-switch v-model="floatingBallEnabled" inline-prompt active-text="开" inactive-text="关" size="small"/>
+                  <el-switch
+                    v-model="floatingBallEnabled"
+                    inline-prompt
+                    active-text="开"
+                    inactive-text="关"
+                    size="small"
+                  />
                 </div>
               </div>
 
@@ -283,7 +355,13 @@
               <div class="setting-item">
                 <div class="setting-label">翻译进度面板</div>
                 <div class="setting-control">
-                  <el-switch v-model="config.translationStatus" inline-prompt active-text="开" inactive-text="关" size="small"/>
+                  <el-switch
+                    v-model="config.translationStatus"
+                    inline-prompt
+                    active-text="开"
+                    inactive-text="关"
+                    size="small"
+                  />
                 </div>
               </div>
 
@@ -291,17 +369,30 @@
               <div class="setting-item">
                 <div class="setting-label">
                   翻译上下文增强
-                  <el-tooltip content="全文翻译前先总结页面关键词和背景，注入到翻译提示词中提升翻译质量" placement="top">
+                  <el-tooltip
+                    content="全文翻译前先总结页面关键词和背景，注入到翻译提示词中提升翻译质量"
+                    placement="top"
+                  >
                     <el-icon class="ml-1 text-gray-400"><InfoFilled /></el-icon>
                   </el-tooltip>
                 </div>
                 <div class="setting-control">
-                  <el-switch v-model="config.enablePageSummary" inline-prompt active-text="开" inactive-text="关" size="small" :disabled="!compute.showModel"/>
+                  <el-switch
+                    v-model="config.enablePageSummary"
+                    inline-prompt
+                    active-text="开"
+                    inactive-text="关"
+                    size="small"
+                    :disabled="!compute.showModel"
+                  />
                 </div>
               </div>
 
               <!-- 翻译上下文增强 - 自定义模型/Key/URL (仅开启时显示) -->
-              <div v-show="config.enablePageSummary && compute.showModel" class="summary-config-section">
+              <div
+                v-show="config.enablePageSummary && compute.showModel"
+                class="summary-config-section"
+              >
                 <div class="setting-item">
                   <div class="setting-label">
                     总结接口地址
@@ -310,7 +401,11 @@
                     </el-tooltip>
                   </div>
                   <div class="setting-control">
-                    <el-input v-model="config.summaryApiUrl" placeholder="留空使用翻译接口" size="small" />
+                    <el-input
+                      v-model="config.summaryApiUrl"
+                      placeholder="留空使用翻译接口"
+                      size="small"
+                    />
                   </div>
                 </div>
                 <div class="setting-item">
@@ -321,7 +416,11 @@
                     </el-tooltip>
                   </div>
                   <div class="setting-control">
-                    <el-input v-model="config.summaryModel" placeholder="留空使用翻译模型" size="small" />
+                    <el-input
+                      v-model="config.summaryModel"
+                      placeholder="留空使用翻译模型"
+                      size="small"
+                    />
                   </div>
                 </div>
                 <div class="setting-item">
@@ -332,7 +431,13 @@
                     </el-tooltip>
                   </div>
                   <div class="setting-control">
-                    <el-input v-model="config.summaryApiKey" type="password" show-password placeholder="留空使用翻译Key" size="small" />
+                    <el-input
+                      v-model="config.summaryApiKey"
+                      type="password"
+                      show-password
+                      placeholder="留空使用翻译Key"
+                      size="small"
+                    />
                   </div>
                 </div>
               </div>
@@ -341,7 +446,13 @@
               <div class="setting-item">
                 <div class="setting-label">动画效果</div>
                 <div class="setting-control">
-                  <el-switch v-model="config.animations" inline-prompt active-text="开" inactive-text="关" size="small"/>
+                  <el-switch
+                    v-model="config.animations"
+                    inline-prompt
+                    active-text="开"
+                    inactive-text="关"
+                    size="small"
+                  />
                 </div>
               </div>
 
@@ -349,11 +460,13 @@
               <div class="setting-item">
                 <div class="setting-label">最大并发数</div>
                 <div class="setting-control">
-                  <el-input-number 
-                    v-model="config.maxConcurrentTranslations" 
-                    :min="1" :max="20" :step="1" 
-                    size="small" 
-                    @change="handleConcurrentChange" 
+                  <el-input-number
+                    v-model="config.maxConcurrentTranslations"
+                    :min="1"
+                    :max="20"
+                    :step="1"
+                    size="small"
+                    @change="handleConcurrentChange"
                     controls-position="right"
                   />
                 </div>
@@ -363,7 +476,11 @@
               <div class="setting-item" v-show="compute.showProxy">
                 <div class="setting-label">代理地址</div>
                 <div class="setting-control">
-                  <el-input v-model="config.proxy[config.service]" placeholder="无需则留空" size="small" />
+                  <el-input
+                    v-model="config.proxy[config.service]"
+                    placeholder="无需则留空"
+                    size="small"
+                  />
                 </div>
               </div>
 
@@ -371,12 +488,21 @@
               <div class="setting-item">
                 <div class="setting-label">
                   调试模式
-                  <el-tooltip content="开启后在浏览器控制台输出详细调试日志，用于排查翻译和总结请求问题" placement="top">
+                  <el-tooltip
+                    content="开启后在浏览器控制台输出详细调试日志，用于排查翻译和总结请求问题"
+                    placement="top"
+                  >
                     <el-icon class="ml-1 text-gray-400"><InfoFilled /></el-icon>
                   </el-tooltip>
                 </div>
                 <div class="setting-control">
-                  <el-switch v-model="config.debugMode" inline-prompt active-text="开" inactive-text="关" size="small"/>
+                  <el-switch
+                    v-model="config.debugMode"
+                    inline-prompt
+                    active-text="开"
+                    inactive-text="关"
+                    size="small"
+                  />
                 </div>
               </div>
 
@@ -386,11 +512,21 @@
               <div v-show="compute.showModel">
                 <div class="role-config">
                   <div class="role-label">System Role</div>
-                  <el-input type="textarea" :rows="2" v-model="config.system_role[config.service]" placeholder="System Prompt" />
+                  <el-input
+                    type="textarea"
+                    :rows="2"
+                    v-model="config.system_role[config.service]"
+                    placeholder="System Prompt"
+                  />
                 </div>
                 <div class="role-config mt-2">
-                  <div class="role-label">User Role ({{'{to}'}}, {{'{origin}'}})</div>
-                  <el-input type="textarea" :rows="2" v-model="config.user_role[config.service]" placeholder="User Prompt Template" />
+                  <div class="role-label">User Role ({{ '{to}' }}, {{ '{origin}' }})</div>
+                  <el-input
+                    type="textarea"
+                    :rows="2"
+                    v-model="config.user_role[config.service]"
+                    placeholder="User Prompt Template"
+                  />
                 </div>
                 <div class="text-right mt-2">
                   <el-button link type="primary" size="small" @click="resetTemplate">
@@ -416,12 +552,16 @@
                 <div class="text-xs text-gray-400 mt-1">请复制上方配置JSON</div>
               </div>
               <div v-if="showImportBox" class="mt-2">
-                <el-input v-model="importData" type="textarea" :rows="4" placeholder="粘贴JSON配置" />
+                <el-input
+                  v-model="importData"
+                  type="textarea"
+                  :rows="4"
+                  placeholder="粘贴JSON配置"
+                />
                 <div class="text-right mt-1">
                   <el-button type="primary" size="small" @click="saveImport">确认导入</el-button>
                 </div>
               </div>
-
             </div>
           </el-collapse-item>
         </el-collapse>
@@ -446,14 +586,22 @@
 </template>
 
 <script lang="ts" setup>
-
 // Main 处理配置信息
-import { computed, ref, watch, onUnmounted } from 'vue'
-import { models, options, servicesType, defaultOption } from "../entrypoints/utils/option";
-import { Config } from "@/entrypoints/utils/model";
+import { computed, ref, watch, onUnmounted } from 'vue';
+import { models, options, servicesType, defaultOption } from '../entrypoints/utils/option';
+import { Config } from '@/entrypoints/utils/model';
 import { storage } from '@wxt-dev/storage';
-import { ChatDotRound, Refresh, Edit, Upload, Download, SwitchButton, InfoFilled, Setting } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox, ElInputNumber } from 'element-plus'
+import {
+  ChatDotRound,
+  Refresh,
+  Edit,
+  Upload,
+  Download,
+  SwitchButton,
+  InfoFilled,
+  Setting,
+} from '@element-plus/icons-vue';
+import { ElMessage, ElMessageBox, ElInputNumber } from 'element-plus';
 import browser from 'webextension-polyfill';
 import { defineAsyncComponent } from 'vue';
 const CustomHotkeyInput = defineAsyncComponent(() => import('@/components/CustomHotkeyInput.vue'));
@@ -495,17 +643,21 @@ storage.watch('local:config', (newValue: any, oldValue: any) => {
 });
 
 // 监听菜单栏配置变化
-watch(() => JSON.parse(JSON.stringify(config.value)), (newValue: any, oldValue: any) => {
-  storage.setItem('local:config', JSON.stringify(newValue));
-  
-  if (oldValue && oldValue.on !== undefined) { 
-    const needRefreshKeys = ['display', 'style', 'service', 'to', 'maxConcurrentTranslations'];
-    const changed = needRefreshKeys.some(key => newValue[key] !== oldValue[key]);
-    if (changed) {
-      showRefreshTip.value = true;
+watch(
+  () => JSON.parse(JSON.stringify(config.value)),
+  (newValue: any, oldValue: any) => {
+    storage.setItem('local:config', JSON.stringify(newValue));
+
+    if (oldValue && oldValue.on !== undefined) {
+      const needRefreshKeys = ['display', 'style', 'service', 'to', 'maxConcurrentTranslations'];
+      const changed = needRefreshKeys.some((key) => newValue[key] !== oldValue[key]);
+      if (changed) {
+        showRefreshTip.value = true;
+      }
     }
-  }
-}, { deep: true });
+  },
+  { deep: true },
+);
 
 // 计算属性
 let compute = ref({
@@ -516,15 +668,20 @@ let compute = ref({
   model: computed(() => models.get(config.value.service) || []),
   showCustom: computed(() => servicesType.isCustom(config.value.service)),
   showDeepLX: computed(() => config.value.service === 'deeplx'),
-  showCustomModel: computed(() => config.value.model[config.value.service] === "自定义模型"),
-  filteredServices: computed(() => options.services.filter((service: any) =>
-    !([service.google].includes(service.value) && config.value.display !== 1))
+  showCustomModel: computed(() => config.value.model[config.value.service] === '自定义模型'),
+  filteredServices: computed(() =>
+    options.services.filter(
+      (service: any) => !([service.google].includes(service.value) && config.value.display !== 1),
+    ),
   ),
-})
-
-watch(() => config.value.theme, (newTheme) => {
-  updateTheme(newTheme || 'auto');
 });
+
+watch(
+  () => config.value.theme,
+  (newTheme) => {
+    updateTheme(newTheme || 'auto');
+  },
+);
 
 darkModeMediaQuery.onchange = (e) => {
   if (config.value.theme === 'auto') {
@@ -537,10 +694,10 @@ onUnmounted(() => {
 });
 
 const styleGroups = computed(() => {
-  const groups = options.styles.filter(item => item.disabled);
-  return groups.map(group => ({
+  const groups = options.styles.filter((item) => item.disabled);
+  return groups.map((group) => ({
     ...group,
-    options: options.styles.filter(item => !item.disabled && item.group === group.value)
+    options: options.styles.filter((item) => !item.disabled && item.group === group.value),
   }));
 });
 
@@ -552,47 +709,56 @@ const resetTemplate = () => {
       confirmButtonText: '确定',
       cancelButtonText: '取消',
       type: 'warning',
-    }
-  ).then(() => {
-    config.value.system_role[config.value.service] = defaultOption.system_role;
-    config.value.user_role[config.value.service] = defaultOption.user_role;
-    ElMessage({
-      message: '已成功恢复默认翻译模板',
-      type: 'success',
-      duration: 2000
-    });
-  }).catch(() => {});
+    },
+  )
+    .then(() => {
+      config.value.system_role[config.value.service] = defaultOption.system_role;
+      config.value.user_role[config.value.service] = defaultOption.user_role;
+      ElMessage({
+        message: '已成功恢复默认翻译模板',
+        type: 'success',
+        duration: 2000,
+      });
+    })
+    .catch(() => {});
 };
 
 const floatingBallEnabled = computed({
   get: () => !config.value.disableFloatingBall && config.value.on,
   set: (value) => {
     config.value.disableFloatingBall = !value;
-    browser.tabs.query({}).then(tabs => {
-      tabs.forEach(tab => {
+    browser.tabs.query({}).then((tabs) => {
+      tabs.forEach((tab) => {
         if (tab.id) {
-          browser.tabs.sendMessage(tab.id, { 
-            type: 'toggleFloatingBall',
-            isEnabled: value 
-          }).catch(() => {});
+          browser.tabs
+            .sendMessage(tab.id, {
+              type: 'toggleFloatingBall',
+              isEnabled: value,
+            })
+            .catch(() => {});
         }
       });
     });
-  }
+  },
 });
 
-watch(() => config.value.selectionTranslatorMode, (newMode) => {
-  browser.tabs.query({}).then(tabs => {
-    tabs.forEach(tab => {
-      if (tab.id) {
-        browser.tabs.sendMessage(tab.id, { 
-          type: 'updateSelectionTranslatorMode',
-          mode: newMode 
-        }).catch(() => {});
-      }
+watch(
+  () => config.value.selectionTranslatorMode,
+  (newMode) => {
+    browser.tabs.query({}).then((tabs) => {
+      tabs.forEach((tab) => {
+        if (tab.id) {
+          browser.tabs
+            .sendMessage(tab.id, {
+              type: 'updateSelectionTranslatorMode',
+              mode: newMode,
+            })
+            .catch(() => {});
+        }
+      });
     });
-  });
-});
+  },
+);
 
 const handleSwitchChange = () => {
   showRefreshTip.value = true;
@@ -602,27 +768,31 @@ const handlePluginStateChange = (val: boolean) => {
   if (!val) {
     if (!config.value.disableFloatingBall) {
       config.value.disableFloatingBall = true;
-      browser.tabs.query({}).then(tabs => {
-        tabs.forEach(tab => {
+      browser.tabs.query({}).then((tabs) => {
+        tabs.forEach((tab) => {
           if (tab.id) {
-            browser.tabs.sendMessage(tab.id, { 
-              type: 'toggleFloatingBall',
-              isEnabled: false
-            }).catch(() => {});
+            browser.tabs
+              .sendMessage(tab.id, {
+                type: 'toggleFloatingBall',
+                isEnabled: false,
+              })
+              .catch(() => {});
           }
         });
       });
     }
-    
+
     if (config.value.selectionTranslatorMode !== 'disabled') {
       config.value.selectionTranslatorMode = 'disabled';
-      browser.tabs.query({}).then(tabs => {
-        tabs.forEach(tab => {
+      browser.tabs.query({}).then((tabs) => {
+        tabs.forEach((tab) => {
           if (tab.id) {
-            browser.tabs.sendMessage(tab.id, { 
-              type: 'updateSelectionTranslatorMode',
-              mode: 'disabled'
-            }).catch(() => {});
+            browser.tabs
+              .sendMessage(tab.id, {
+                type: 'updateSelectionTranslatorMode',
+                mode: 'disabled',
+              })
+              .catch(() => {});
           }
         });
       });
@@ -655,11 +825,11 @@ const openCustomHotkeyDialog = () => {
 const handleCustomHotkeyConfirm = (hotkey: string) => {
   config.value.customFloatingBallHotkey = hotkey;
   config.value.floatingBallHotkey = 'custom';
-  
+
   ElMessage({
     message: hotkey === 'none' ? '已禁用快捷键' : `快捷键已设置为: ${getCustomHotkeyDisplayName()}`,
     type: 'success',
-    duration: 2000
+    duration: 2000,
   });
 };
 
@@ -693,11 +863,12 @@ const openCustomMouseHotkeyDialog = () => {
 const handleCustomMouseHotkeyConfirm = (hotkey: string) => {
   config.value.customHotkey = hotkey;
   config.value.hotkey = 'custom';
-  
+
   ElMessage({
-    message: hotkey === 'none' ? '已禁用快捷键' : `快捷键已设置为: ${getCustomMouseHotkeyDisplayName()}`,
+    message:
+      hotkey === 'none' ? '已禁用快捷键' : `快捷键已设置为: ${getCustomMouseHotkeyDisplayName()}`,
     type: 'success',
-    duration: 2000
+    duration: 2000,
   });
 };
 
@@ -719,7 +890,7 @@ const handleConcurrentChange = (currentValue: number | undefined, oldValue: numb
     ElMessage({
       message: '并发数量必须在 1-100 之间',
       type: 'warning',
-      duration: 2000
+      duration: 2000,
     });
     config.value.maxConcurrentTranslations = 6;
     return;
@@ -752,13 +923,15 @@ const handleExport = async () => {
   const cleanedConfig = JSON.parse(JSON.stringify(configToExport));
   if (cleanedConfig.system_role) {
     for (const service in cleanedConfig.system_role) {
-      if (cleanedConfig.system_role[service] === defaultOption.system_role) delete cleanedConfig.system_role[service];
+      if (cleanedConfig.system_role[service] === defaultOption.system_role)
+        delete cleanedConfig.system_role[service];
     }
     if (Object.keys(cleanedConfig.system_role).length === 0) delete cleanedConfig.system_role;
   }
   if (cleanedConfig.user_role) {
     for (const service in cleanedConfig.user_role) {
-      if (cleanedConfig.user_role[service] === defaultOption.user_role) delete cleanedConfig.user_role[service];
+      if (cleanedConfig.user_role[service] === defaultOption.user_role)
+        delete cleanedConfig.user_role[service];
     }
     if (Object.keys(cleanedConfig.user_role).length === 0) delete cleanedConfig.user_role;
   }
@@ -801,7 +974,6 @@ const validateConfig = (configData: any): boolean => {
     return false;
   }
 };
-
 </script>
 
 <style scoped>

@@ -7,20 +7,62 @@ export const MODIFIER_KEYS: Record<string, string[]> = {
   ctrl: ['control', 'ctrl'],
   alt: ['alt', 'option'],
   shift: ['shift'],
-  meta: ['meta', 'cmd', 'command']
+  meta: ['meta', 'cmd', 'command'],
 };
 
 // 支持的普通按键
 export const REGULAR_KEYS = {
   // 字母
-  a: 'a', b: 'b', c: 'c', d: 'd', e: 'e', f: 'f', g: 'g', h: 'h', i: 'i', j: 'j',
-  k: 'k', l: 'l', m: 'm', n: 'n', o: 'o', p: 'p', q: 'q', r: 'r', s: 's', t: 't',
-  u: 'u', v: 'v', w: 'w', x: 'x', y: 'y', z: 'z',
+  a: 'a',
+  b: 'b',
+  c: 'c',
+  d: 'd',
+  e: 'e',
+  f: 'f',
+  g: 'g',
+  h: 'h',
+  i: 'i',
+  j: 'j',
+  k: 'k',
+  l: 'l',
+  m: 'm',
+  n: 'n',
+  o: 'o',
+  p: 'p',
+  q: 'q',
+  r: 'r',
+  s: 's',
+  t: 't',
+  u: 'u',
+  v: 'v',
+  w: 'w',
+  x: 'x',
+  y: 'y',
+  z: 'z',
   // 数字
-  '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6', '7': '7', '8': '8', '9': '9',
+  '0': '0',
+  '1': '1',
+  '2': '2',
+  '3': '3',
+  '4': '4',
+  '5': '5',
+  '6': '6',
+  '7': '7',
+  '8': '8',
+  '9': '9',
   // 功能键
-  f1: 'f1', f2: 'f2', f3: 'f3', f4: 'f4', f5: 'f5', f6: 'f6',
-  f7: 'f7', f8: 'f8', f9: 'f9', f10: 'f10', f11: 'f11', f12: 'f12',
+  f1: 'f1',
+  f2: 'f2',
+  f3: 'f3',
+  f4: 'f4',
+  f5: 'f5',
+  f6: 'f6',
+  f7: 'f7',
+  f8: 'f8',
+  f9: 'f9',
+  f10: 'f10',
+  f11: 'f11',
+  f12: 'f12',
   // 特殊键
   space: 'space',
   enter: 'enter',
@@ -38,17 +80,28 @@ export const REGULAR_KEYS = {
   arrowleft: 'arrowleft',
   arrowright: 'arrowright',
   // 符号键
-  '`': '`', '~': '~',
-  '-': '-', '_': '_',
-  '=': '=', '+': '+',
-  '[': '[', '{': '{',
-  ']': ']', '}': '}',
-  '\\': '\\', '|': '|',
-  ';': ';', ':': ':',
-  "'": "'", '"': '"',
-  ',': ',', '<': '<',
-  '.': '.', '>': '>',
-  '/': '/', '?': '?',
+  '`': '`',
+  '~': '~',
+  '-': '-',
+  _: '_',
+  '=': '=',
+  '+': '+',
+  '[': '[',
+  '{': '{',
+  ']': ']',
+  '}': '}',
+  '\\': '\\',
+  '|': '|',
+  ';': ';',
+  ':': ':',
+  "'": "'",
+  '"': '"',
+  ',': ',',
+  '<': '<',
+  '.': '.',
+  '>': '>',
+  '/': '/',
+  '?': '?',
 } as const;
 
 // 快捷键解析结果接口
@@ -72,29 +125,32 @@ export function parseHotkey(hotkeyString: string): ParsedHotkey {
       key: '',
       isValid: false,
       displayName: '',
-      errorMessage: '快捷键不能为空'
+      errorMessage: '快捷键不能为空',
     };
   }
 
-  const parts = hotkeyString.toLowerCase().split('+').map(part => part.trim());
-  
+  const parts = hotkeyString
+    .toLowerCase()
+    .split('+')
+    .map((part) => part.trim());
+
   if (parts.length === 0) {
     return {
       modifiers: [],
       key: '',
       isValid: false,
       displayName: '',
-      errorMessage: '无效的快捷键格式'
+      errorMessage: '无效的快捷键格式',
     };
   }
 
   const modifiers: string[] = [];
   let key = '';
-  
+
   // 检查每个部分
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
-    
+
     if (i === parts.length - 1) {
       // 最后一个部分应该是普通按键
       if (REGULAR_KEYS[part as keyof typeof REGULAR_KEYS]) {
@@ -105,7 +161,7 @@ export function parseHotkey(hotkeyString: string): ParsedHotkey {
           key: part,
           isValid: false,
           displayName: '',
-          errorMessage: `不支持的按键: ${part}`
+          errorMessage: `不支持的按键: ${part}`,
         };
       }
     } else {
@@ -120,14 +176,14 @@ export function parseHotkey(hotkeyString: string): ParsedHotkey {
           break;
         }
       }
-      
+
       if (!isValidModifier) {
         return {
           modifiers,
           key,
           isValid: false,
           displayName: '',
-          errorMessage: `不支持的修饰键: ${part}`
+          errorMessage: `不支持的修饰键: ${part}`,
         };
       }
     }
@@ -140,7 +196,7 @@ export function parseHotkey(hotkeyString: string): ParsedHotkey {
       key,
       isValid: false,
       displayName: '',
-      errorMessage: '单个字母键需要与修饰键组合使用'
+      errorMessage: '单个字母键需要与修饰键组合使用',
     };
   }
 
@@ -151,13 +207,13 @@ export function parseHotkey(hotkeyString: string): ParsedHotkey {
       key,
       isValid: false,
       displayName: '',
-      errorMessage: 'CMD 键已被禁用，请使用其他修饰键组合'
+      errorMessage: 'CMD 键已被禁用，请使用其他修饰键组合',
     };
   }
 
   // 生成显示名称
   const displayName = generateDisplayName(modifiers, key);
-  
+
   return {
     modifiers,
     key,
@@ -174,23 +230,23 @@ export function parseHotkey(hotkeyString: string): ParsedHotkey {
  */
 function generateDisplayName(modifiers: string[], key: string): string {
   const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform);
-  const modifierDisplayNames: Record<string, string> = isMac ? 
-    {
-      ctrl: 'Control',
-      alt: 'Option', 
-      shift: 'Shift',
-      meta: 'Cmd'
-    } : 
-    {
-      ctrl: 'Ctrl',
-      alt: 'Alt',
-      shift: 'Shift', 
-      meta: 'Win'
-    };
+  const modifierDisplayNames: Record<string, string> = isMac
+    ? {
+        ctrl: 'Control',
+        alt: 'Option',
+        shift: 'Shift',
+        meta: 'Cmd',
+      }
+    : {
+        ctrl: 'Ctrl',
+        alt: 'Alt',
+        shift: 'Shift',
+        meta: 'Win',
+      };
 
   const keyDisplayName = key.charAt(0).toUpperCase() + key.slice(1);
-  const modifierNames = modifiers.map(mod => modifierDisplayNames[mod] || mod);
-  
+  const modifierNames = modifiers.map((mod) => modifierDisplayNames[mod] || mod);
+
   return [...modifierNames, keyDisplayName].join('+');
 }
 
@@ -206,7 +262,7 @@ export function matchesHotkey(event: KeyboardEvent, parsedHotkey: ParsedHotkey):
   // 检查修饰键
   const requiredModifiers = new Set(parsedHotkey.modifiers);
   const actualModifiers = new Set();
-  
+
   if (event.ctrlKey) actualModifiers.add('ctrl');
   if (event.altKey) actualModifiers.add('alt');
   if (event.shiftKey) actualModifiers.add('shift');
@@ -221,24 +277,26 @@ export function matchesHotkey(event: KeyboardEvent, parsedHotkey: ParsedHotkey):
   // 检查普通按键
   const eventKey = event.key.toLowerCase();
   const eventCode = event.code?.toLowerCase();
-  
+
   // 处理特殊按键映射
   const keyMappings: Record<string, string[]> = {
-    'space': [' ', 'space'],
-    'enter': ['enter', 'return'],
-    'escape': ['escape', 'esc'],
-    'backspace': ['backspace'],
-    'delete': ['delete', 'del'],
-    'tab': ['tab'],
-    'arrowup': ['arrowup', 'up'],
-    'arrowdown': ['arrowdown', 'down'],
-    'arrowleft': ['arrowleft', 'left'],
-    'arrowright': ['arrowright', 'right'],
+    space: [' ', 'space'],
+    enter: ['enter', 'return'],
+    escape: ['escape', 'esc'],
+    backspace: ['backspace'],
+    delete: ['delete', 'del'],
+    tab: ['tab'],
+    arrowup: ['arrowup', 'up'],
+    arrowdown: ['arrowdown', 'down'],
+    arrowleft: ['arrowleft', 'left'],
+    arrowright: ['arrowright', 'right'],
   };
 
   if (keyMappings[parsedHotkey.key]) {
-    return keyMappings[parsedHotkey.key].includes(eventKey) || 
-           keyMappings[parsedHotkey.key].some(k => eventCode?.includes(k));
+    return (
+      keyMappings[parsedHotkey.key].includes(eventKey) ||
+      keyMappings[parsedHotkey.key].some((k) => eventCode?.includes(k))
+    );
   }
 
   // 普通字母数字键
@@ -260,9 +318,9 @@ export function matchesHotkey(event: KeyboardEvent, parsedHotkey: ParsedHotkey):
  * @param parsedHotkey 解析后的快捷键
  * @returns 冲突信息
  */
-export function validateHotkeyConflicts(parsedHotkey: ParsedHotkey): { 
-  hasConflict: boolean; 
-  conflictDescription?: string 
+export function validateHotkeyConflicts(parsedHotkey: ParsedHotkey): {
+  hasConflict: boolean;
+  conflictDescription?: string;
 } {
   if (!parsedHotkey.isValid) {
     return { hasConflict: false };
@@ -293,7 +351,7 @@ export function validateHotkeyConflicts(parsedHotkey: ParsedHotkey): {
     { modifiers: ['ctrl', 'shift'], key: 't', desc: '重新打开关闭的标签页' },
     { modifiers: ['ctrl', 'shift'], key: 'n', desc: '无痕模式' },
     { modifiers: ['ctrl', 'shift'], key: 'delete', desc: '清除浏览数据' },
-    
+
     // macOS 系统快捷键
     { modifiers: ['meta'], key: 'c', desc: '复制' },
     { modifiers: ['meta'], key: 'v', desc: '粘贴' },
@@ -312,12 +370,14 @@ export function validateHotkeyConflicts(parsedHotkey: ParsedHotkey): {
   ];
 
   for (const conflict of commonConflicts) {
-    if (conflict.modifiers.length === modifiers.length && 
-        conflict.key === key &&
-        conflict.modifiers.every(mod => modifiers.includes(mod))) {
+    if (
+      conflict.modifiers.length === modifiers.length &&
+      conflict.key === key &&
+      conflict.modifiers.every((mod) => modifiers.includes(mod))
+    ) {
       return {
         hasConflict: true,
-        conflictDescription: `与系统快捷键冲突: ${conflict.desc}`
+        conflictDescription: `与系统快捷键冲突: ${conflict.desc}`,
       };
     }
   }
@@ -329,19 +389,19 @@ export function validateHotkeyConflicts(parsedHotkey: ParsedHotkey): {
  * 预设的快捷键选项
  */
 export const PRESET_HOTKEYS = [
-  { value: "Alt+T", label: "Alt+T / Option+T" },
-  { value: "Alt+A", label: "Alt+A / Option+A" },
-  { value: "Alt+S", label: "Alt+S / Option+S" },
-  { value: "Alt+D", label: "Alt+D / Option+D" },
-  { value: "Alt+Q", label: "Alt+Q / Option+Q" },
-  { value: "Ctrl+Alt+T", label: "Ctrl+Alt+T / Control+Option+T" },
-  { value: "Ctrl+Alt+A", label: "Ctrl+Alt+A / Control+Option+A" },
-  { value: "Ctrl+Shift+T", label: "Ctrl+Shift+T / Control+Shift+T" },
-  { value: "Ctrl+Shift+A", label: "Ctrl+Shift+A / Control+Shift+A" },
-  { value: "F9", label: "F9" },
-  { value: "F10", label: "F10" },
-  { value: "F11", label: "F11" },
-  { value: "F12", label: "F12" },
-  { value: "none", label: "禁用快捷键" },
-  { value: "custom", label: "自定义快捷键..." },
+  { value: 'Alt+T', label: 'Alt+T / Option+T' },
+  { value: 'Alt+A', label: 'Alt+A / Option+A' },
+  { value: 'Alt+S', label: 'Alt+S / Option+S' },
+  { value: 'Alt+D', label: 'Alt+D / Option+D' },
+  { value: 'Alt+Q', label: 'Alt+Q / Option+Q' },
+  { value: 'Ctrl+Alt+T', label: 'Ctrl+Alt+T / Control+Option+T' },
+  { value: 'Ctrl+Alt+A', label: 'Ctrl+Alt+A / Control+Option+A' },
+  { value: 'Ctrl+Shift+T', label: 'Ctrl+Shift+T / Control+Shift+T' },
+  { value: 'Ctrl+Shift+A', label: 'Ctrl+Shift+A / Control+Shift+A' },
+  { value: 'F9', label: 'F9' },
+  { value: 'F10', label: 'F10' },
+  { value: 'F11', label: 'F11' },
+  { value: 'F12', label: 'F12' },
+  { value: 'none', label: '禁用快捷键' },
+  { value: 'custom', label: '自定义快捷键...' },
 ];

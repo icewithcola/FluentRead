@@ -1,42 +1,70 @@
 <template>
-  <div class="fr-floating-ball" :class="{
-    'floating-ball-expanded': isExpanded,
-    'dragging': isDragging,
-    'is-translating': isTranslating,
-    'animating': isAnimating && config.animations,
-    'static-mode': !config.animations
-  }" :data-position="currentDisplayPosition" @mouseenter="expandBall" @mouseleave="collapseBall" :style="positionStyle"
-       @mousedown="startDrag" @click="toggleTranslation" ref="floatingBall">
+  <div
+    class="fr-floating-ball"
+    :class="{
+      'floating-ball-expanded': isExpanded,
+      dragging: isDragging,
+      'is-translating': isTranslating,
+      animating: isAnimating && config.animations,
+      'static-mode': !config.animations,
+    }"
+    :data-position="currentDisplayPosition"
+    @mouseenter="expandBall"
+    @mouseleave="collapseBall"
+    :style="positionStyle"
+    @mousedown="startDrag"
+    @click="toggleTranslation"
+    ref="floatingBall"
+  >
     <div class="floating-ball-icon">
       <div class="fr-icon-container">
-        <svg v-if="iconType === 'simple' && !isTranslating" class="translation-icon" viewBox="0 0 24 24" fill="none"
-          xmlns="http://www.w3.org/2000/svg">
+        <svg
+          v-if="iconType === 'simple' && !isTranslating"
+          class="translation-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
           <path
             d="M12.87 15.07L10.33 12.56L10.36 12.53C12.1 10.59 13.34 8.36 14.07 6H17V4H10V2H8V4H1V6H12.17C11.5 7.92 10.44 9.75 9 11.35C8.07 10.32 7.3 9.19 6.69 8H4.69C5.42 9.63 6.42 11.17 7.67 12.56L2.58 17.58L4 19L9 14L12.11 17.11L12.87 15.07Z"
-            fill="#333" />
+            fill="#333"
+          />
         </svg>
-        <svg v-if="iconType === 'simple' && isTranslating" class="translation-icon" viewBox="0 0 24 24" fill="none"
-          xmlns="http://www.w3.org/2000/svg">
+        <svg
+          v-if="iconType === 'simple' && isTranslating"
+          class="translation-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
           <path
             d="M12.87 15.07L10.33 12.56L10.36 12.53C12.1 10.59 13.34 8.36 14.07 6H17V4H10V2H8V4H1V6H12.17C11.5 7.92 10.44 9.75 9 11.35C8.07 10.32 7.3 9.19 6.69 8H4.69C5.42 9.63 6.42 11.17 7.67 12.56L2.58 17.58L4 19L9 14L12.11 17.11L12.87 15.07Z"
-            fill="#4caf50" />
+            fill="#4caf50"
+          />
         </svg>
-        <svg v-if="iconType === 'morden'" class="imt-fb-logo-img-big-bg translation-icon"
-          :class="{ 'imt-float-ball-translated': isTranslating }" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
-          width="20" height="20">
+        <svg
+          v-if="iconType === 'morden'"
+          class="imt-fb-logo-img-big-bg translation-icon"
+          :class="{ 'imt-float-ball-translated': isTranslating }"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          width="20"
+          height="20"
+        >
           <path fill="none" d="M0 0h24v24H0z"></path>
           <path
             d="M5 15v2a2 2 0 0 0 1.85 1.995L7 19h3v2H7a4 4 0 0 1-4-4v-2h2zm13-5l4.4 11h-2.155l-1.201-3h-4.09l-1.199 3h-2.154L16 10h2zm-1 2.885L15.753 16h2.492L17 12.885zM8 2v2h4v7H8v3H6v-3H2V4h4V2h2zm9 1a4 4 0 0 1 4 4v2h-2V7a2 2 0 0 0-2-2h-3V3h3zM6 6H4v3h2V6zm4 0H8v3h2V6z"
-            fill="rgba(255,255,255,1)"></path>
+            fill="rgba(255,255,255,1)"
+          ></path>
         </svg>
 
         <div class="check-mark" v-if="isTranslating"></div>
-        
+
         <!-- 添加快捷键提示 -->
         <div class="shortcut-tooltip" v-if="showShortcutTooltip">
           {{ shortcutTip }}
         </div>
-        
+
         <!-- 波纹效果容器 -->
         <div class="ripple-container" ref="rippleContainer"></div>
       </div>
@@ -53,41 +81,41 @@ const props = defineProps({
   position: {
     type: String as PropType<'left' | 'right'>,
     default: 'right',
-    validator: (value: string) => ['left', 'right'].includes(value)
+    validator: (value: string) => ['left', 'right'].includes(value),
   },
   showMenu: {
     type: Boolean,
-    default: true
+    default: true,
   },
   onDocClick: {
     type: Function as PropType<(event: MouseEvent) => void>,
-    default: () => { }
+    default: () => {},
   },
   onSettingsClick: {
     type: Function as PropType<(event: MouseEvent) => void>,
-    default: () => { }
+    default: () => {},
   },
   onPositionChanged: {
     type: Function as PropType<(newPosition: 'left' | 'right') => void>,
-    default: () => { }
+    default: () => {},
   },
   onTranslationToggle: {
     type: Function as PropType<(isTranslating: boolean) => void>,
-    default: () => { }
+    default: () => {},
   },
   iconType: {
     type: String as PropType<'simple' | 'morden'>,
     default: 'morden',
-    validator: (value: string) => ['simple', 'morden'].includes(value)
+    validator: (value: string) => ['simple', 'morden'].includes(value),
   },
   showShortcutTooltip: {
     type: Boolean,
-    default: false
+    default: false,
   },
   shortcutTip: {
     type: String,
-    default: ''
-  }
+    default: '',
+  },
 });
 
 const isExpanded = ref(false);
@@ -127,7 +155,7 @@ const updatePositionStyle = () => {
     top: newTop,
     left: undefined,
     right: undefined,
-    transform: undefined
+    transform: undefined,
   };
 };
 
@@ -148,7 +176,7 @@ const startDrag = (event: MouseEvent) => {
     left: `${currentElementX}px`,
     top: `${currentElementY}px`,
     right: 'auto',
-    transform: 'none'
+    transform: 'none',
   };
 
   document.addEventListener('mousemove', drag);
@@ -175,7 +203,7 @@ const drag = (event: MouseEvent) => {
     left: `${Math.max(0, Math.min(newX, maxX))}px`,
     top: `${Math.max(0, Math.min(newY, maxY))}px`,
     right: 'auto',
-    transform: 'none'
+    transform: 'none',
   };
 
   startX.value = event.clientX;
@@ -224,17 +252,17 @@ const handleSettingsClick = (event: MouseEvent) => {
 // 新增：添加波纹效果
 const addRippleEffect = (color: string = '#4caf50') => {
   if (!rippleContainer.value) return;
-  
+
   const ripple = document.createElement('div');
   ripple.classList.add('ripple');
   ripple.style.backgroundColor = color;
-  
+
   rippleContainer.value.appendChild(ripple);
-  
+
   // 触发波纹动画
   setTimeout(() => {
     ripple.classList.add('active');
-    
+
     // 动画结束后移除波纹元素
     setTimeout(() => {
       if (rippleContainer.value?.contains(ripple)) {
@@ -247,18 +275,18 @@ const addRippleEffect = (color: string = '#4caf50') => {
 // 新增：触发动画效果
 const triggerAnimation = (type: 'translate' | 'restore') => {
   isAnimating.value = true;
-  
+
   // 添加波纹效果
   addRippleEffect(type === 'translate' ? '#4285f4' : '#4caf50');
-  
+
   // 显示快捷键提示
   showShortcutTooltip.value = true;
-  
+
   // 2秒后隐藏提示
   setTimeout(() => {
     showShortcutTooltip.value = false;
   }, 2000);
-  
+
   // 动画结束后重置状态
   setTimeout(() => {
     isAnimating.value = false;
@@ -279,14 +307,14 @@ const toggleTranslation = (event: MouseEvent) => {
 
   isTranslating.value = !isTranslating.value;
   triggerAnimation(isTranslating.value ? 'translate' : 'restore');
-  
+
   // 触发自定义事件
   if (isTranslating.value) {
     document.dispatchEvent(new CustomEvent('fluentread-translation-started'));
   } else {
     document.dispatchEvent(new CustomEvent('fluentread-translation-ended'));
   }
-  
+
   if (floatingBall.value?.matches(':hover')) {
     isExpanded.value = true;
   }
@@ -297,17 +325,17 @@ const toggleTranslation = (event: MouseEvent) => {
 const handleExternalToggle = () => {
   // 切换状态
   isTranslating.value = !isTranslating.value;
-  
+
   // 触发动画
   triggerAnimation(isTranslating.value ? 'translate' : 'restore');
-  
+
   // 触发自定义事件
   if (isTranslating.value) {
     document.dispatchEvent(new CustomEvent('fluentread-translation-started'));
   } else {
     document.dispatchEvent(new CustomEvent('fluentread-translation-ended'));
   }
-  
+
   // 通知父组件
   props.onTranslationToggle(isTranslating.value);
 };
@@ -331,10 +359,10 @@ onMounted(() => {
   window.addEventListener('resize', updatePositionStyle);
   document.addEventListener('click', handleClickOutside);
   document.addEventListener('mousemove', handleMouseMove);
-  
+
   // 监听自定义事件
   document.addEventListener('fluentread-toggle-translation', handleExternalToggle);
-  
+
   // 使组件暴露给父组件
   if (floatingBall.value) {
     (floatingBall.value as any).element = floatingBall.value;
@@ -348,19 +376,21 @@ onBeforeUnmount(() => {
   document.removeEventListener('mouseup', stopDrag);
   document.removeEventListener('click', handleClickOutside);
   document.removeEventListener('mousemove', handleMouseMove);
-  
+
   // 移除自定义事件监听
   document.removeEventListener('fluentread-toggle-translation', handleExternalToggle);
 });
 
-watch(() => props.position, (newPosition) => {
-  if (newPosition !== internalPosition.value) {
-    internalPosition.value = newPosition;
-    draggedY.value = null;
-    updatePositionStyle();
-  }
-});
-
+watch(
+  () => props.position,
+  (newPosition) => {
+    if (newPosition !== internalPosition.value) {
+      internalPosition.value = newPosition;
+      draggedY.value = null;
+      updatePositionStyle();
+    }
+  },
+);
 </script>
 
 <style scoped>
@@ -396,7 +426,7 @@ watch(() => props.position, (newPosition) => {
   height: 20px;
   margin: 0;
   padding: 3px;
-  background-color: #ED6D8F;
+  background-color: #ed6d8f;
   border-radius: 50%;
   margin: 0 3px;
 }
@@ -576,7 +606,7 @@ watch(() => props.position, (newPosition) => {
 }
 
 .check-mark::after {
-  content: "";
+  content: '';
   display: block;
   width: 4px;
   height: 7px;
@@ -585,13 +615,13 @@ watch(() => props.position, (newPosition) => {
   transform: rotate(45deg) translate(-0.75px, -0.75px);
 }
 
-.fr-floating-ball[data-position="left"] {
+.fr-floating-ball[data-position='left'] {
   left: 0;
   right: auto;
   transform: translateX(-50%);
 }
 
-.fr-floating-ball[data-position="right"] {
+.fr-floating-ball[data-position='right'] {
   right: 0;
   left: auto;
   transform: translateX(50%);

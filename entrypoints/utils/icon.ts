@@ -1,13 +1,10 @@
 // 失败时展示的图标
-import { sendErrorMessage } from "./tip";
-import "element-plus/es/components/message/style/css";
-import {
-  handleBilingualTranslation,
-  handleSingleTranslation,
-} from "@/entrypoints/main/trans";
-import { config } from "@/entrypoints/utils/config";
-import { styles } from "@/entrypoints/utils/constant";
-import { services, options } from "./option";
+import { sendErrorMessage } from './tip';
+import 'element-plus/es/components/message/style/css';
+import { handleBilingualTranslation, handleSingleTranslation } from '@/entrypoints/main/trans';
+import { config } from '@/entrypoints/utils/config';
+import { styles } from '@/entrypoints/utils/constant';
+import { services, options } from './option';
 
 const icon = {
   retry: `<svg fill="none" viewBox="0 0 40 40" height="40" width="40" style="display: inline; align-items: center; justify-content: center; width: 1em; height: 1em; margin-left: 1em; pointer-events: none;">
@@ -19,31 +16,27 @@ const icon = {
 };
 
 // 插入失败提示并处理错误
-export function insertFailedTip(
-  node: HTMLElement,
-  errMsg: string,
-  spinner: HTMLElement
-) {
+export function insertFailedTip(node: HTMLElement, errMsg: string, spinner: HTMLElement) {
   spinner?.remove(); // 取消转圈动画
 
   // 创建包装元素
-  const wrapper = document.createElement("span");
-  wrapper.classList.add("fluent-read-retry-wrapper");
+  const wrapper = document.createElement('span');
+  wrapper.classList.add('fluent-read-retry-wrapper');
 
   // 创建重试按钮
-  const retryBtn = document.createElement("span");
-  retryBtn.innerText = "重试";
-  retryBtn.classList.add("fluent-read-retry");
-  retryBtn.addEventListener("click", handleRetryClick(node, wrapper));
+  const retryBtn = document.createElement('span');
+  retryBtn.innerText = '重试';
+  retryBtn.classList.add('fluent-read-retry');
+  retryBtn.addEventListener('click', handleRetryClick(node, wrapper));
 
   // 添加失败标记
-  node.classList.add("fluent-read-failure");
+  node.classList.add('fluent-read-failure');
 
   // 创建错误信息提示按钮
-  const errorTip = document.createElement("span");
-  errorTip.innerText = "错误原因";
-  errorTip.classList.add("fluent-read-reason");
-  errorTip.addEventListener("click", handleErrorClick(errMsg));
+  const errorTip = document.createElement('span');
+  errorTip.innerText = '错误原因';
+  errorTip.classList.add('fluent-read-reason');
+  errorTip.addEventListener('click', handleErrorClick(errMsg));
 
   // 创建图标元素
   const retryElement = createIconElement(icon.retry);
@@ -61,7 +54,7 @@ function handleRetryClick(node: HTMLElement, wrapper: HTMLElement) {
     event.stopPropagation();
 
     wrapper.remove(); // 移除错误提示元素，重新翻译
-    node.classList.remove("fluent-read-failure"); // 移除失败标记
+    node.classList.remove('fluent-read-failure'); // 移除失败标记
 
     // 根据当前配置的翻译模式决定使用哪种翻译方式
     if (config.display === styles.bilingualTranslation) {
@@ -85,47 +78,50 @@ function handleErrorClick(errMsg: string) {
 
 // 根据错误信息返回错误提示
 function getErrorMessage(errMsg: string): string {
-  if (errMsg.includes("auth failed") || errMsg.includes("API key")) {
-    return "Token 似乎有点问题，请前往设置页面重新配置后再试。";
-  } else if (errMsg.includes("quota") || errMsg.includes("limit")) {
-    const service = options.services.find((s: { value: string; label: string }) => s.value === config.service);
-    return "你的请求频率过高，被【" + (service?.label || config.service) + "】拒绝了，请稍后再试吧~";
-  } else if (errMsg.includes("network error")) {
-    return "网络连接好像不稳定，请检查网络后再试。";
-  } else if (errMsg.includes("model")) {
-    return "模型配置可能有误，请前往设置页面进行检查和调整。";
-  } else if (errMsg.includes("timeout")) {
-    return "请求超时啦，请稍后再试一次。";
+  if (errMsg.includes('auth failed') || errMsg.includes('API key')) {
+    return 'Token 似乎有点问题，请前往设置页面重新配置后再试。';
+  } else if (errMsg.includes('quota') || errMsg.includes('limit')) {
+    const service = options.services.find(
+      (s: { value: string; label: string }) => s.value === config.service,
+    );
+    return (
+      '你的请求频率过高，被【' + (service?.label || config.service) + '】拒绝了，请稍后再试吧~'
+    );
+  } else if (errMsg.includes('network error')) {
+    return '网络连接好像不稳定，请检查网络后再试。';
+  } else if (errMsg.includes('model')) {
+    return '模型配置可能有误，请前往设置页面进行检查和调整。';
+  } else if (errMsg.includes('timeout')) {
+    return '请求超时啦，请稍后再试一次。';
   } else {
-    return errMsg || "出现了未知错误，请前往开源社区联系开发者吧~";
+    return errMsg || '出现了未知错误，请前往开源社区联系开发者吧~';
   }
 }
 
 // 创建图标元素
 function createIconElement(iconContent: string): HTMLElement {
-  const iconElement = document.createElement("div");
+  const iconElement = document.createElement('div');
   iconElement.innerHTML = iconContent;
   return iconElement;
 }
 
 // 插入加载动画
-export function insertLoadingSpinner(
-  node: HTMLElement,
-  isCache: boolean = false
-): HTMLElement {
-  const spinner = document.createElement("span");
-  spinner.className = "fluent-read-loading";
-  if (isCache) spinner.style.borderTop = "3px solid green"; // 存在缓存时改为绿色
-  
+export function insertLoadingSpinner(node: HTMLElement, isCache: boolean = false): HTMLElement {
+  const spinner = document.createElement('span');
+  spinner.className = 'fluent-read-loading';
+  if (isCache) spinner.style.borderTop = '3px solid green'; // 存在缓存时改为绿色
+
   // 异步检查动画配置
-  import('@/entrypoints/utils/config').then(({ config }) => {
-    if (!config.animations && !spinner.classList.contains('static')) {
-      spinner.classList.add('static');
-    }
-  }).catch(() => {
-    // 忽略错误，使用默认动画
-  });
-  
+  import('@/entrypoints/utils/config')
+    .then(({ config }) => {
+      if (!config.animations && !spinner.classList.contains('static')) {
+        spinner.classList.add('static');
+      }
+    })
+    .catch(() => {
+      // 忽略错误，使用默认动画
+    });
+
   node.appendChild(spinner);
   return spinner;
 }

@@ -1,51 +1,55 @@
 // 消息模板工具
-import {customModelString, defaultOption} from "./option";
-import {config} from "@/entrypoints/utils/config";
-import {isCantonese} from "./common";
+import { customModelString, defaultOption } from './option';
+import { config } from '@/entrypoints/utils/config';
+import { isCantonese } from './common';
 
 // openai 格式的消息模板（通用模板）
 // pageSummary: optional page summary context to inject into the prompt for better translation
 export function commonMsgTemplate(origin: string, pageSummary?: string) {
-    // 检测是否使用自定义模型
-    let model = config.model[config.service] === customModelString ? config.customModel[config.service] : config.model[config.service]
+  // 检测是否使用自定义模型
+  let model =
+    config.model[config.service] === customModelString
+      ? config.customModel[config.service]
+      : config.model[config.service];
 
-    // 删除模型名称中的中文括号及其内容，如"gpt-4（推荐）" -> "gpt-4"
-    model = model.replace(/（.*）/g, "");
+  // 删除模型名称中的中文括号及其内容，如"gpt-4（推荐）" -> "gpt-4"
+  model = model.replace(/（.*）/g, '');
 
-    let system = config.system_role[config.service] || defaultOption.system_role;
+  let system = config.system_role[config.service] || defaultOption.system_role;
 
-    // 规范化原文：将 HTML 缩进产生的连续空白（换行/制表符/连续空格）折叠为单个空格，
-    // 并去除首尾空白，避免这些无关空白被模型原样带入译文内容
-    const cleanedOrigin = origin.replace(/\s+/g, ' ').trim();
+  // 规范化原文：将 HTML 缩进产生的连续空白（换行/制表符/连续空格）折叠为单个空格，
+  // 并去除首尾空白，避免这些无关空白被模型原样带入译文内容
+  const cleanedOrigin = origin.replace(/\s+/g, ' ').trim();
 
-    let user = (config.user_role[config.service] || defaultOption.user_role)
-        .replace('{{to}}', config.to).replace('{{origin}}', cleanedOrigin);
+  let user = (config.user_role[config.service] || defaultOption.user_role)
+    .replace('{{to}}', config.to)
+    .replace('{{origin}}', cleanedOrigin);
 
-    // 如果是粤语，注入专属的粤语理解与意译Prompt
-    if (isCantonese(origin)) {
-        system += `\n\nNote: The source text is written in Cantonese (粤语/广东话) and may contain Cantonese slang, colloquial grammar, and internet abbreviations (e.g. 'po' means post/帖子, '劈' means drinking/chugging, etc.). Do NOT perform a word-for-word literal translation. Instead, fully understand the meaning, slang, and context of the Cantonese text, and translate it into standard, natural, and idiomatic ${config.to}.`;
-    }
+  // 如果是粤语，注入专属的粤语理解与意译Prompt
+  if (isCantonese(origin)) {
+    system += `\n\nNote: The source text is written in Cantonese (粤语/广东话) and may contain Cantonese slang, colloquial grammar, and internet abbreviations (e.g. 'po' means post/帖子, '劈' means drinking/chugging, etc.). Do NOT perform a word-for-word literal translation. Instead, fully understand the meaning, slang, and context of the Cantonese text, and translate it into standard, natural, and idiomatic ${config.to}.`;
+  }
 
-    // Inject page summary context into the system prompt if available
-    if (pageSummary) {
-        system += `\n\nPage context for reference (use this to improve translation accuracy, especially for proper nouns and domain-specific terms):\n${pageSummary}`;
-    }
+  // Inject page summary context into the system prompt if available
+  if (pageSummary) {
+    system += `\n\nPage context for reference (use this to improve translation accuracy, especially for proper nouns and domain-specific terms):\n${pageSummary}`;
+  }
 
-    const body: any = {
-        'model': model,
-        "temperature": 0.7,
-        'messages': [
-            {'role': 'system', 'content': system},
-            {'role': 'user', 'content': user},
-        ]
-    };
+  const body: any = {
+    model: model,
+    temperature: 0.7,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+  };
 
-    // Enable streaming if configured
-    if (config.useStream) {
-        body.stream = true;
-    }
+  // Enable streaming if configured
+  if (config.useStream) {
+    body.stream = true;
+  }
 
-    return JSON.stringify(body);
+  return JSON.stringify(body);
 }
 
 /**
@@ -54,38 +58,52 @@ export function commonMsgTemplate(origin: string, pageSummary?: string) {
  * Always non-streaming since we need the full result before translations begin.
  */
 export function summaryMsgTemplate(content: string) {
-    // Use summary-specific model if configured, otherwise fall back to translation model
-    let model: string;
-    if (config.summaryModel) {
-        model = config.summaryModel;
-    } else {
-        model = config.model[config.service] === customModelString ? config.customModel[config.service] : config.model[config.service];
-    }
-    model = model.replace(/（.*）/g, "");
+  // Use summary-specific model if configured, otherwise fall back to translation model
+  let model: string;
+  if (config.summaryModel) {
+    model = config.summaryModel;
+  } else {
+    model =
+      config.model[config.service] === customModelString
+        ? config.customModel[config.service]
+        : config.model[config.service];
+  }
+  model = model.replace(/（.*）/g, '');
 
-    if (config.debugMode) {
-        console.log("[FluentRead Debug] summaryMsgTemplate - model:", model, "| target language:", config.to, "| content length:", content.length);
-    }
+  if (config.debugMode) {
+    console.log(
+      '[FluentRead Debug] summaryMsgTemplate - model:',
+      model,
+      '| target language:',
+      config.to,
+      '| content length:',
+      content.length,
+    );
+  }
 
-    const system = "You are a professional content analyst. Your job is to extract key context from webpage content to help a translator produce more accurate translations.";
-    const user = `Analyze the following webpage content. Provide a brief context summary in 1-2 sentences, then list up to 10 key terms/proper nouns with their correct translations in ${config.to}. Format your response exactly as:\nContext: <brief background>\nKey terms: <term1> = <translation1>, <term2> = <translation2>, ...\n\n${content}`;
+  const system =
+    'You are a professional content analyst. Your job is to extract key context from webpage content to help a translator produce more accurate translations.';
+  const user = `Analyze the following webpage content. Provide a brief context summary in 1-2 sentences, then list up to 10 key terms/proper nouns with their correct translations in ${config.to}. Format your response exactly as:\nContext: <brief background>\nKey terms: <term1> = <translation1>, <term2> = <translation2>, ...\n\n${content}`;
 
-    const body: any = {
-        'model': model,
-        "temperature": 0.3,
-        "stream": false,
-        'messages': [
-            {'role': 'system', 'content': system},
-            {'role': 'user', 'content': user},
-        ]
-    };
+  const body: any = {
+    model: model,
+    temperature: 0.3,
+    stream: false,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+  };
 
-    if (config.debugMode) {
-        console.log("[FluentRead Debug] summaryMsgTemplate - model:", model, "| stream:", false);
-        console.log("[FluentRead Debug] summaryMsgTemplate - system prompt:", system);
-        console.log("[FluentRead Debug] summaryMsgTemplate - user prompt (first 300 chars):", user.slice(0, 300) + "...");
-    }
+  if (config.debugMode) {
+    console.log('[FluentRead Debug] summaryMsgTemplate - model:', model, '| stream:', false);
+    console.log('[FluentRead Debug] summaryMsgTemplate - system prompt:', system);
+    console.log(
+      '[FluentRead Debug] summaryMsgTemplate - user prompt (first 300 chars):',
+      user.slice(0, 300) + '...',
+    );
+  }
 
-    // Always non-streaming for summary since we need the full result upfront
-    return JSON.stringify(body);
+  // Always non-streaming for summary since we need the full result upfront
+  return JSON.stringify(body);
 }

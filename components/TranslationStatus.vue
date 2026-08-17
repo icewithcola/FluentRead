@@ -1,5 +1,8 @@
 <template>
-  <div class="translation-status-container" v-if="isVisible && isFloatingBallTranslating && !userClosed">
+  <div
+    class="translation-status-container"
+    v-if="isVisible && isFloatingBallTranslating && !userClosed"
+  >
     <div class="translation-status-card">
       <div class="translation-status-header">
         <div class="translation-status-title">翻译进度</div>
@@ -8,7 +11,9 @@
       <div class="translation-status-content">
         <div class="translation-status-row">
           <div class="translation-status-label">当前活跃任务:</div>
-          <div class="translation-status-value">{{ status.activeTranslations }} / {{ status.maxConcurrent }}</div>
+          <div class="translation-status-value">
+            {{ status.activeTranslations }} / {{ status.maxConcurrent }}
+          </div>
         </div>
         <div class="translation-status-row">
           <div class="translation-status-label">等待中的任务:</div>
@@ -35,15 +40,15 @@ const status = ref({
   pendingTranslations: 0,
   maxConcurrent: 6,
   isQueueFull: false,
-  totalTasksInProcess: 0
+  totalTasksInProcess: 0,
 });
 
 // 计算进度条样式
 const progressStyle = computed(() => {
-  const percent = status.value.activeTranslations / status.value.maxConcurrent * 100;
+  const percent = (status.value.activeTranslations / status.value.maxConcurrent) * 100;
   return {
     width: `${percent}%`,
-    backgroundColor: percent > 80 ? '#ff7675' : percent > 50 ? '#fdcb6e' : '#00cec9'
+    backgroundColor: percent > 80 ? '#ff7675' : percent > 50 ? '#fdcb6e' : '#00cec9',
   };
 });
 
@@ -63,7 +68,7 @@ const resetClosedState = () => {
       }, 1000);
     }
   });
-  
+
   // 监听 URL 变化
   const lastUrl = location.href;
   const urlObserver = new MutationObserver(() => {
@@ -71,10 +76,10 @@ const resetClosedState = () => {
       userClosed.value = false;
     }
   });
-  
+
   // 观察 document 的子节点变化，这可能发生在 URL 变化时
   urlObserver.observe(document, { subtree: true, childList: true });
-  
+
   return () => {
     document.removeEventListener('visibilitychange', () => {});
     urlObserver.disconnect();
@@ -88,7 +93,7 @@ let statusUpdateTimer: number;
 const updateStatus = () => {
   const currentStatus = getTranslationStatus();
   status.value = currentStatus;
-  
+
   // 只有当有活跃任务或等待任务时才显示状态卡片
   isVisible.value = currentStatus.activeTranslations > 0 || currentStatus.pendingTranslations > 0;
 };
@@ -103,22 +108,22 @@ const listenToFloatingBallState = () => {
       userClosed.value = false;
     }
   };
-  
+
   // 监听自定义事件: 翻译结束
   const handleTranslationEnded = () => {
     isFloatingBallTranslating.value = false;
   };
-  
+
   // 添加事件监听器
   document.addEventListener('fluentread-translation-started', handleTranslationStarted);
   document.addEventListener('fluentread-translation-ended', handleTranslationEnded);
-  
+
   // 返回清理函数
   return {
     cleanup: () => {
       document.removeEventListener('fluentread-translation-started', handleTranslationStarted);
       document.removeEventListener('fluentread-translation-ended', handleTranslationEnded);
-    }
+    },
   };
 };
 
@@ -148,7 +153,9 @@ onUnmounted(() => {
   bottom: 20px;
   right: 20px;
   z-index: 9999;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans',
+    'Helvetica Neue', sans-serif;
 }
 
 .translation-status-card {
@@ -217,54 +224,56 @@ onUnmounted(() => {
 
 .translation-status-progress-bar {
   height: 100%;
-  transition: width 0.3s ease, background-color 0.3s ease;
+  transition:
+    width 0.3s ease,
+    background-color 0.3s ease;
 }
 
 /* 暗黑模式支持 - 使用 :root[class="dark"] 选择器匹配 FluentRead 的主题系统 */
-:root[class="dark"] .translation-status-card {
+:root[class='dark'] .translation-status-card {
   background-color: #2d3436;
   border-color: #4d4d4d;
   color: #dfe6e9;
 }
 
-:root[class="dark"] .translation-status-header {
+:root[class='dark'] .translation-status-header {
   background-color: #2980b9;
 }
 
-:root[class="dark"] .translation-status-label {
+:root[class='dark'] .translation-status-label {
   color: #b2bec3;
 }
 
-:root[class="dark"] .translation-status-value {
+:root[class='dark'] .translation-status-value {
   color: #dfe6e9;
 }
 
-:root[class="dark"] .translation-status-progress {
+:root[class='dark'] .translation-status-progress {
   background-color: #3d3d3d;
 }
 
 /* 保留媒体查询以支持自动模式 */
 @media (prefers-color-scheme: dark) {
-  :root:not([class="light"]) .translation-status-card {
+  :root:not([class='light']) .translation-status-card {
     background-color: #2d3436;
     border-color: #4d4d4d;
     color: #dfe6e9;
   }
-  
-  :root:not([class="light"]) .translation-status-header {
+
+  :root:not([class='light']) .translation-status-header {
     background-color: #2980b9;
   }
-  
-  :root:not([class="light"]) .translation-status-label {
+
+  :root:not([class='light']) .translation-status-label {
     color: #b2bec3;
   }
-  
-  :root:not([class="light"]) .translation-status-value {
+
+  :root:not([class='light']) .translation-status-value {
     color: #dfe6e9;
   }
-  
-  :root:not([class="light"]) .translation-status-progress {
+
+  :root:not([class='light']) .translation-status-progress {
     background-color: #3d3d3d;
   }
 }
-</style> 
+</style>

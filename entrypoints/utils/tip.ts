@@ -1,15 +1,15 @@
-import {ElMessage} from "element-plus";
-import {throttle} from "@/entrypoints/utils/common";
+import { ElMessage } from 'element-plus';
+import { throttle } from '@/entrypoints/utils/common';
 
 // deprecated
-const prefix = "";
+const prefix = '';
 
 function _sendErrorMessage(message: string) {
-    ElMessage({message: prefix + message, type: 'error'});
+  ElMessage({ message: prefix + message, type: 'error' });
 }
 
 function _sendSuccessMessage(message: string) {
-    ElMessage({message: prefix + message, type: 'success'});
+  ElMessage({ message: prefix + message, type: 'success' });
 }
 
 // 使用防抖函数包装，1s 内只能发送一次消息

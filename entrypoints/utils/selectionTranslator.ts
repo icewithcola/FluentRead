@@ -11,7 +11,11 @@ let app: any = null;
  */
 export function mountSelectionTranslator() {
   // 如果已存在实例或配置禁用了此功能，则不创建
-  if (selectionTranslatorInstance || config.disableSelectionTranslator || config.selectionTranslatorMode === 'disabled') {
+  if (
+    selectionTranslatorInstance ||
+    config.disableSelectionTranslator ||
+    config.selectionTranslatorMode === 'disabled'
+  ) {
     return;
   }
 
@@ -36,12 +40,12 @@ export function unmountSelectionTranslator() {
   if (selectionTranslatorInstance && app) {
     // 获取容器
     const container = document.getElementById('fluent-read-selection-translator-container');
-    
+
     // 卸载Vue应用
     app.unmount();
     selectionTranslatorInstance = null;
     app = null;
-    
+
     // 移除容器
     if (container) {
       container.remove();
@@ -60,7 +64,7 @@ export function toggleSelectionTranslator() {
     config.disableSelectionTranslator = false;
     mountSelectionTranslator();
   }
-  
+
   // 保存配置到存储
   saveConfig();
 }
@@ -73,4 +77,4 @@ function saveConfig() {
   storage.setItem('local:config', JSON.stringify(config)).catch((error) => {
     console.error('Failed to save config:', error);
   });
-} 
+}

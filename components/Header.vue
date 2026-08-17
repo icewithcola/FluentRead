@@ -11,7 +11,7 @@
 </template>
 
 <script lang="ts" setup>
-const version = process.env.VUE_APP_VERSION || '1.0.0'
+const version = process.env.VUE_APP_VERSION || '1.0.0';
 </script>
 
 <style scoped>
@@ -21,7 +21,7 @@ const version = process.env.VUE_APP_VERSION || '1.0.0'
   justify-content: center;
   padding: 16px 20px;
   background: var(--fr-card-bg);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   margin-bottom: 2px;
   position: sticky;
   top: 0;
@@ -32,7 +32,7 @@ const version = process.env.VUE_APP_VERSION || '1.0.0'
 
 html.dark .header-container {
   background-color: rgba(37, 37, 37, 0.85);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .logo-area {

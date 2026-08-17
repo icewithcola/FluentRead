@@ -13,15 +13,13 @@
     >
       <div class="hotkey-input-container">
         <div class="input-section">
-          <el-text class="input-label">
-            请按下您想要设置的快捷键组合：
-          </el-text>
-          <div 
+          <el-text class="input-label"> 请按下您想要设置的快捷键组合： </el-text>
+          <div
             class="hotkey-input-field"
-            :class="{ 
-              'recording': isRecording, 
-              'error': errorMessage,
-              'success': parsedHotkey?.isValid && !errorMessage 
+            :class="{
+              recording: isRecording,
+              error: errorMessage,
+              success: parsedHotkey?.isValid && !errorMessage,
             }"
             @click="startRecording"
             @keydown="handleKeyDown"
@@ -40,21 +38,24 @@
               {{ parsedHotkey?.displayName || currentHotkey }}
             </div>
           </div>
-          
+
           <!-- 错误提示 -->
           <div v-if="errorMessage" class="error-message">
             <el-icon><WarningFilled /></el-icon>
             {{ errorMessage }}
           </div>
-          
+
           <!-- 冲突警告 -->
           <div v-if="conflictWarning" class="warning-message">
             <el-icon><Warning /></el-icon>
             {{ conflictWarning }}
           </div>
-          
+
           <!-- 成功提示 -->
-          <div v-if="parsedHotkey?.isValid && !errorMessage && !conflictWarning" class="success-message">
+          <div
+            v-if="parsedHotkey?.isValid && !errorMessage && !conflictWarning"
+            class="success-message"
+          >
             <el-icon><CircleCheckFilled /></el-icon>
             快捷键有效，可以使用
           </div>
@@ -80,7 +81,8 @@
         <!-- 简化说明 -->
         <div class="help-section">
           <el-text size="small" type="info">
-            提示：建议使用修饰键组合（如 Ctrl+字母），避免与系统快捷键冲突。注意：不能使用 CMD 充当快捷键
+            提示：建议使用修饰键组合（如 Ctrl+字母），避免与系统快捷键冲突。注意：不能使用 CMD
+            充当快捷键
           </el-text>
         </div>
       </div>
@@ -89,11 +91,7 @@
         <div class="dialog-footer">
           <el-button @click="handleCancel">取消</el-button>
           <el-button @click="clearHotkey" v-if="currentHotkey">清除</el-button>
-          <el-button 
-            type="primary" 
-            @click="handleConfirm"
-            :disabled="!canConfirm"
-          >
+          <el-button type="primary" @click="handleConfirm" :disabled="!canConfirm">
             确认
           </el-button>
         </div>
@@ -106,7 +104,12 @@
 import { ref, computed, nextTick, watch } from 'vue';
 import { ElDialog, ElButton, ElText, ElIcon, ElCollapse, ElCollapseItem } from 'element-plus';
 import { Loading, WarningFilled, Warning, CircleCheckFilled } from '@element-plus/icons-vue';
-import { parseHotkey, matchesHotkey, validateHotkeyConflicts, type ParsedHotkey } from '@/entrypoints/utils/hotkey';
+import {
+  parseHotkey,
+  matchesHotkey,
+  validateHotkeyConflicts,
+  type ParsedHotkey,
+} from '@/entrypoints/utils/hotkey';
 
 // Props
 interface Props {
@@ -115,7 +118,7 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  currentValue: ''
+  currentValue: '',
 });
 
 // Emits
@@ -130,7 +133,7 @@ const emit = defineEmits<Emits>();
 // 响应式数据
 const dialogVisible = computed({
   get: () => props.modelValue,
-  set: (value) => emit('update:modelValue', value)
+  set: (value) => emit('update:modelValue', value),
 });
 
 const currentHotkey = ref(props.currentValue || '');
@@ -148,8 +151,7 @@ const parsedHotkey = computed<ParsedHotkey | null>(() => {
 
 // 检查是否可以确认
 const canConfirm = computed(() => {
-  return currentHotkey.value === 'none' || 
-         (parsedHotkey.value?.isValid && !errorMessage.value);
+  return currentHotkey.value === 'none' || (parsedHotkey.value?.isValid && !errorMessage.value);
 });
 
 // 推荐的快捷键
@@ -162,9 +164,12 @@ const recommendedHotkeys = [
 ];
 
 // 监听当前值变化
-watch(() => props.currentValue, (newValue) => {
-  currentHotkey.value = newValue || '';
-});
+watch(
+  () => props.currentValue,
+  (newValue) => {
+    currentHotkey.value = newValue || '';
+  },
+);
 
 // 监听快捷键变化，进行验证
 watch(currentHotkey, (newValue) => {
@@ -175,16 +180,16 @@ watch(currentHotkey, (newValue) => {
 function validateCurrentHotkey(hotkeyString: string) {
   errorMessage.value = '';
   conflictWarning.value = '';
-  
+
   if (!hotkeyString || hotkeyString === 'none') return;
-  
+
   const parsed = parseHotkey(hotkeyString);
-  
+
   if (!parsed.isValid) {
     errorMessage.value = parsed.errorMessage || '无效的快捷键';
     return;
   }
-  
+
   // 检查冲突
   const conflictCheck = validateHotkeyConflicts(parsed);
   if (conflictCheck.hasConflict) {
@@ -195,12 +200,12 @@ function validateCurrentHotkey(hotkeyString: string) {
 // 开始录制快捷键
 async function startRecording() {
   if (isRecording.value) return;
-  
+
   isRecording.value = true;
   pressedKeys.value.clear();
   errorMessage.value = '';
   conflictWarning.value = '';
-  
+
   // 聚焦输入框
   await nextTick();
   inputField.value?.focus();
@@ -209,25 +214,25 @@ async function startRecording() {
 // 处理按键按下
 function handleKeyDown(event: KeyboardEvent) {
   if (!isRecording.value) return;
-  
+
   event.preventDefault();
   event.stopPropagation();
-  
+
   // 记录按下的键
   if (event.ctrlKey) pressedKeys.value.add('ctrl');
   if (event.altKey) pressedKeys.value.add('alt');
   if (event.shiftKey) pressedKeys.value.add('shift');
   if (event.metaKey) pressedKeys.value.add('meta');
-  
+
   // 处理普通按键
   const key = event.key.toLowerCase();
   const code = event.code?.toLowerCase();
-  
+
   // 忽略单独的修饰键
   if (['control', 'alt', 'shift', 'meta'].includes(key)) {
     return;
   }
-  
+
   // 记录普通按键
   if (key.length === 1) {
     pressedKeys.value.add(key);
@@ -238,18 +243,18 @@ function handleKeyDown(event: KeyboardEvent) {
   } else {
     // 特殊键处理
     const specialKeys = {
-      'escape': 'escape',
-      'enter': 'enter',
-      'space': 'space',
-      'tab': 'tab',
-      'backspace': 'backspace',
-      'delete': 'delete',
-      'arrowup': 'arrowup',
-      'arrowdown': 'arrowdown',
-      'arrowleft': 'arrowleft',
-      'arrowright': 'arrowright'
+      escape: 'escape',
+      enter: 'enter',
+      space: 'space',
+      tab: 'tab',
+      backspace: 'backspace',
+      delete: 'delete',
+      arrowup: 'arrowup',
+      arrowdown: 'arrowdown',
+      arrowleft: 'arrowleft',
+      arrowright: 'arrowright',
     };
-    
+
     if (specialKeys[key as keyof typeof specialKeys]) {
       pressedKeys.value.add(specialKeys[key as keyof typeof specialKeys]);
     }
@@ -259,10 +264,10 @@ function handleKeyDown(event: KeyboardEvent) {
 // 处理按键释放
 function handleKeyUp(event: KeyboardEvent) {
   if (!isRecording.value) return;
-  
+
   event.preventDefault();
   event.stopPropagation();
-  
+
   // 延迟一点再生成快捷键，确保所有键都被记录
   setTimeout(() => {
     if (pressedKeys.value.size > 0) {
@@ -275,24 +280,24 @@ function handleKeyUp(event: KeyboardEvent) {
 function generateHotkeyFromKeys() {
   const modifiers: string[] = [];
   let regularKey = '';
-  
+
   // 提取修饰键
   if (pressedKeys.value.has('ctrl')) modifiers.push('Ctrl');
   if (pressedKeys.value.has('alt')) modifiers.push('Alt');
   if (pressedKeys.value.has('shift')) modifiers.push('Shift');
   if (pressedKeys.value.has('meta')) modifiers.push('Meta');
-  
+
   // 提取普通按键（找到最后一个非修饰键）
   for (const key of pressedKeys.value) {
     if (!['ctrl', 'alt', 'shift', 'meta'].includes(key)) {
       regularKey = key.toUpperCase();
     }
   }
-  
+
   if (regularKey) {
     currentHotkey.value = [...modifiers, regularKey].join('+');
   }
-  
+
   isRecording.value = false;
   pressedKeys.value.clear();
 }
@@ -316,7 +321,7 @@ function clearHotkey() {
 // 确认
 function handleConfirm() {
   if (!canConfirm.value) return;
-  
+
   emit('confirm', currentHotkey.value);
   dialogVisible.value = false;
 }
@@ -396,9 +401,15 @@ function handleCancel() {
 }
 
 @keyframes pulse {
-  0% { box-shadow: 0 0 0 0 var(--el-color-warning-light-5); }
-  70% { box-shadow: 0 0 0 8px transparent; }
-  100% { box-shadow: 0 0 0 0 transparent; }
+  0% {
+    box-shadow: 0 0 0 0 var(--el-color-warning-light-5);
+  }
+  70% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
 }
 
 .placeholder {
@@ -419,8 +430,12 @@ function handleCancel() {
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .hotkey-display {

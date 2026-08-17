@@ -1,27 +1,72 @@
-import { getMainDomain, selectCompatFn } from "@/entrypoints/main/compat";
+import { getMainDomain, selectCompatFn } from '@/entrypoints/main/compat';
 import { html } from 'js-beautify';
-import { handleBtnTranslation } from "@/entrypoints/main/trans";
+import { handleBtnTranslation } from '@/entrypoints/main/trans';
 
 // 直接翻译的标签集合（块级元素）
 const directSet = new Set([
-    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',  // 标题
-    'p', 'blockquote',       // 段落和引用
-    'li', 'dt', 'dd', // 列表项（不包含ul/ol/dl容器，避免重复翻译）
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6', // 标题
+  'p',
+  'blockquote', // 段落和引用
+  'li',
+  'dt',
+  'dd', // 列表项（不包含ul/ol/dl容器，避免重复翻译）
 ]);
 
 // 需要跳过的标签
 const skipSet = new Set([
-    'html', 'body', 'script', 'style', 'noscript', 'iframe',
-    'input', 'textarea', 'select', 'button', 'code', 'pre', 'figcaption',
-    'nav', 'aside', 'button',
-    'header', 'footer', 'audio', 'video', 'canvas', 'svg'
+  'html',
+  'body',
+  'script',
+  'style',
+  'noscript',
+  'iframe',
+  'input',
+  'textarea',
+  'select',
+  'button',
+  'code',
+  'pre',
+  'figcaption',
+  'nav',
+  'aside',
+  'button',
+  'header',
+  'footer',
+  'audio',
+  'video',
+  'canvas',
+  'svg',
 ]);
 
 // 内联元素集合（可以包含在其他元素内的元素）
 export const inlineSet = new Set([
-    'a', 'b', 'strong', 'span', 'em', 'i', 'u', 'small', 'sub', 'sup',
-    'font', 'mark', 'cite', 'q', 'abbr', 'time', 'ruby', 'bdi', 'bdo',
-    'img', 'br', 'wbr'
+  'a',
+  'b',
+  'strong',
+  'span',
+  'em',
+  'i',
+  'u',
+  'small',
+  'sub',
+  'sup',
+  'font',
+  'mark',
+  'cite',
+  'q',
+  'abbr',
+  'time',
+  'ruby',
+  'bdi',
+  'bdo',
+  'img',
+  'br',
+  'wbr',
 ]);
 
 const TRANSLATED_ATTR = 'data-fr-translated';
@@ -30,382 +75,398 @@ const TRANSLATED_ATTR = 'data-fr-translated';
  * 检查元素是否可见
  */
 function isVisible(el: Element): boolean {
-    if (!el) return false;
-    
-    // 检查隐藏属性和类
-    if (el.hasAttribute('hidden') || 
-        el.classList.contains('sr-only') || 
-        el.classList.contains('notranslate') ||
-        el.getAttribute('aria-hidden') === 'true') {
+  if (!el) return false;
+
+  // 检查隐藏属性和类
+  if (
+    el.hasAttribute('hidden') ||
+    el.classList.contains('sr-only') ||
+    el.classList.contains('notranslate') ||
+    el.getAttribute('aria-hidden') === 'true'
+  ) {
+    return false;
+  }
+
+  // 检查是否已经翻译过
+  if (el.hasAttribute(TRANSLATED_ATTR)) {
+    return false;
+  }
+
+  // 启发式检查：如果 offsetParent 为空且不是固定定位，通常是隐藏的
+  if (el instanceof HTMLElement) {
+    if (el.offsetParent === null) {
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
         return false;
+      }
     }
+  }
 
-    // 检查是否已经翻译过
-    if (el.hasAttribute(TRANSLATED_ATTR)) {
-        return false;
-    }
-
-    // 启发式检查：如果 offsetParent 为空且不是固定定位，通常是隐藏的
-    if (el instanceof HTMLElement) {
-        if (el.offsetParent === null) {
-            const style = window.getComputedStyle(el);
-            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
-                return false;
-            }
-        }
-    }
-
-    return true;
+  return true;
 }
 
 // 传入父节点，返回所有需要翻译的 DOM 元素数组
 export function grabAllNode(rootNode: Node): Element[] {
-    if (!rootNode) return [];
+  if (!rootNode) return [];
 
-    const result: Element[] = [];
+  const result: Element[] = [];
 
-    const walker = document.createTreeWalker(
-        rootNode,
-        NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
-        {
-            acceptNode: (node: Node): number => {
-                if (node instanceof Text) {
-                    return node.textContent && stripWhitespace(node.textContent) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-                }
-
-                if (!(node instanceof Element)) return NodeFilter.FILTER_SKIP;
-
-                const tag = node.tagName.toLowerCase();
-
-                // 跳过不需要翻译的标签或不可见元素
-                if (skipSet.has(tag) || !isVisible(node)) {
-                    return NodeFilter.FILTER_REJECT;
-                }
-
-                // 检查是否包含子元素
-                let hasNonEmptyElement = false;
-                let hasText = false;
-
-                for (const child of node.childNodes) {
-                    if (child.nodeType === Node.ELEMENT_NODE) {
-                        if ((child as Element).textContent && stripWhitespace((child as Element).textContent!)) {
-                            hasNonEmptyElement = true;
-                            break;
-                        }
-                    } else if (child.nodeType === Node.TEXT_NODE && child.textContent && stripWhitespace(child.textContent)) {
-                        hasText = true;
-                    }
-                }
-
-                // 如果有非空子元素，说明当前节点是容器，跳过它继续遍历子节点
-                if (hasNonEmptyElement) {
-                    return NodeFilter.FILTER_SKIP;
-                }
-
-                // 如果有文本且没有元素子节点，或者虽然没有文本但它是我们要直接翻译的标签
-                if (hasText || directSet.has(tag)) {
-                    return NodeFilter.FILTER_ACCEPT;
-                }
-
-                return NodeFilter.FILTER_SKIP;
-            }
+  const walker = document.createTreeWalker(
+    rootNode,
+    NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+    {
+      acceptNode: (node: Node): number => {
+        if (node instanceof Text) {
+          return node.textContent && stripWhitespace(node.textContent)
+            ? NodeFilter.FILTER_ACCEPT
+            : NodeFilter.FILTER_REJECT;
         }
-    );
 
-    // 遍历出所有可翻译的节点
-    let currentNode: Node | null;
-    while (currentNode = walker.nextNode()) {
-        const translateNode = grabNode(currentNode as Element | Text);
-        if (translateNode && translateNode instanceof Element) {
-            result.push(translateNode);
-            
-            // 重要：为了避免重复翻译，我们需要跳过这个 translateNode 的所有后续节点
-            // 既然已经决定翻译 translateNode，那么它内部的所有内容都已经包含在内了
-            // 我们将 walker 的指针移动到 translateNode 的最后一个子节点，
-            // 这样下一次 walker.nextNode() 就会跳出这个 translateNode
-            let lastDescendant = translateNode as Node;
-            while (lastDescendant.lastChild) {
-                lastDescendant = lastDescendant.lastChild;
-            }
-            walker.currentNode = lastDescendant;
+        if (!(node instanceof Element)) return NodeFilter.FILTER_SKIP;
+
+        const tag = node.tagName.toLowerCase();
+
+        // 跳过不需要翻译的标签或不可见元素
+        if (skipSet.has(tag) || !isVisible(node)) {
+          return NodeFilter.FILTER_REJECT;
         }
+
+        // 检查是否包含子元素
+        let hasNonEmptyElement = false;
+        let hasText = false;
+
+        for (const child of node.childNodes) {
+          if (child.nodeType === Node.ELEMENT_NODE) {
+            if (
+              (child as Element).textContent &&
+              stripWhitespace((child as Element).textContent!)
+            ) {
+              hasNonEmptyElement = true;
+              break;
+            }
+          } else if (
+            child.nodeType === Node.TEXT_NODE &&
+            child.textContent &&
+            stripWhitespace(child.textContent)
+          ) {
+            hasText = true;
+          }
+        }
+
+        // 如果有非空子元素，说明当前节点是容器，跳过它继续遍历子节点
+        if (hasNonEmptyElement) {
+          return NodeFilter.FILTER_SKIP;
+        }
+
+        // 如果有文本且没有元素子节点，或者虽然没有文本但它是我们要直接翻译的标签
+        if (hasText || directSet.has(tag)) {
+          return NodeFilter.FILTER_ACCEPT;
+        }
+
+        return NodeFilter.FILTER_SKIP;
+      },
+    },
+  );
+
+  // 遍历出所有可翻译的节点
+  let currentNode: Node | null;
+  while ((currentNode = walker.nextNode())) {
+    const translateNode = grabNode(currentNode as Element | Text);
+    if (translateNode && translateNode instanceof Element) {
+      result.push(translateNode);
+
+      // 重要：为了避免重复翻译，我们需要跳过这个 translateNode 的所有后续节点
+      // 既然已经决定翻译 translateNode，那么它内部的所有内容都已经包含在内了
+      // 我们将 walker 的指针移动到 translateNode 的最后一个子节点，
+      // 这样下一次 walker.nextNode() 就会跳出这个 translateNode
+      let lastDescendant = translateNode as Node;
+      while (lastDescendant.lastChild) {
+        lastDescendant = lastDescendant.lastChild;
+      }
+      walker.currentNode = lastDescendant;
     }
-    
-    // 最后的去重和过滤
-    return Array.from(new Set(result)).filter(node => node && node.isConnected);
+  }
+
+  // 最后的去重和过滤
+  return Array.from(new Set(result)).filter((node) => node && node.isConnected);
 }
 
 // 返回最终应该翻译的父节点或 false
 export function grabNode(node: any): any {
-    // 空节点检查
-    if (!node) return false;
+  // 空节点检查
+  if (!node) return false;
 
-    // 对于 Text 节点，尝试找到其可翻译的父节点
-    if (node instanceof Text) {
-        const parent = node.parentNode;
-        if (parent && parent instanceof Element) {
-            return grabNode(parent);
-        }
-        return false;
+  // 对于 Text 节点，尝试找到其可翻译的父节点
+  if (node instanceof Text) {
+    const parent = node.parentNode;
+    if (parent && parent instanceof Element) {
+      return grabNode(parent);
     }
-
-    if (!(node instanceof Element)) return false;
-
-    const curTag = node.tagName.toLowerCase();
-
-    // 1. 快速过滤：跳过不需要翻译的节点或已经翻译过的节点
-    if (shouldSkipNode(node, curTag)) return false;
-
-    // 2. 特殊适配：根据域名进行特殊处理
-    const domainHandler = selectCompatFn[getMainDomain(location.href.split('?')[0])];
-    if (domainHandler) {
-        const result = domainHandler(node);
-        if (result && typeof result === 'object' && 'skip' in result && result.skip === true) {
-            return false;
-        }
-        if (result) return result;
-    }
-
-    // 3. 直接翻译：块级元素
-    if (directSet.has(curTag)) return node;
-
-    // 4. 按钮处理：特殊处理按钮内的文本
-    if (isButton(node, curTag)) {
-        handleButtonTranslation(node);
-        return false;
-    }
-
-    // 5. 内联元素处理：向上查找合适的父节点
-    // 如果当前是内联元素，我们要看它的父节点是否也是可翻译的（比如 p 标签包裹 span）
-    if (isInlineElement(node, curTag)) {
-        const parent = node.parentNode;
-        if (parent && parent instanceof Element) {
-            const translatableParent = grabNode(parent);
-            if (translatableParent) return translatableParent;
-        }
-        return node;
-    }
-
-    // 6. 首行文本处理：处理 div 和 label 的首行文本
-    if (curTag === 'div' || curTag === 'label') {
-        // 如果 div 只有文本节点而没有元素子节点，也可以直接翻译
-        if (detectChildMeta(node) && node.textContent && stripWhitespace(node.textContent)) {
-            return node;
-        }
-        return handleFirstLineText(node);
-    }
-
     return false;
+  }
+
+  if (!(node instanceof Element)) return false;
+
+  const curTag = node.tagName.toLowerCase();
+
+  // 1. 快速过滤：跳过不需要翻译的节点或已经翻译过的节点
+  if (shouldSkipNode(node, curTag)) return false;
+
+  // 2. 特殊适配：根据域名进行特殊处理
+  const domainHandler = selectCompatFn[getMainDomain(location.href.split('?')[0])];
+  if (domainHandler) {
+    const result = domainHandler(node);
+    if (result && typeof result === 'object' && 'skip' in result && result.skip === true) {
+      return false;
+    }
+    if (result) return result;
+  }
+
+  // 3. 直接翻译：块级元素
+  if (directSet.has(curTag)) return node;
+
+  // 4. 按钮处理：特殊处理按钮内的文本
+  if (isButton(node, curTag)) {
+    handleButtonTranslation(node);
+    return false;
+  }
+
+  // 5. 内联元素处理：向上查找合适的父节点
+  // 如果当前是内联元素，我们要看它的父节点是否也是可翻译的（比如 p 标签包裹 span）
+  if (isInlineElement(node, curTag)) {
+    const parent = node.parentNode;
+    if (parent && parent instanceof Element) {
+      const translatableParent = grabNode(parent);
+      if (translatableParent) return translatableParent;
+    }
+    return node;
+  }
+
+  // 6. 首行文本处理：处理 div 和 label 的首行文本
+  if (curTag === 'div' || curTag === 'label') {
+    // 如果 div 只有文本节点而没有元素子节点，也可以直接翻译
+    if (detectChildMeta(node) && node.textContent && stripWhitespace(node.textContent)) {
+      return node;
+    }
+    return handleFirstLineText(node);
+  }
+
+  return false;
 }
 
 // 检查是否应该跳过节点
 function shouldSkipNode(node: any, tag: string): boolean {
-    if (!node || !(node instanceof Element)) return true;
-    
-    return skipSet.has(tag) ||
-        node.hasAttribute(TRANSLATED_ATTR) ||
-        node.classList?.contains('notranslate') ||
-        node.isContentEditable ||
-        !isVisible(node) ||
-        checkTextSize(node) ||
-        isMainlyNumericContent(node) ||
-        isShortTextNode(node);
+  if (!node || !(node instanceof Element)) return true;
+
+  return (
+    skipSet.has(tag) ||
+    node.hasAttribute(TRANSLATED_ATTR) ||
+    node.classList?.contains('notranslate') ||
+    (node as HTMLElement).isContentEditable ||
+    !isVisible(node) ||
+    checkTextSize(node) ||
+    isMainlyNumericContent(node) ||
+    isShortTextNode(node)
+  );
 }
 
 // Strip all Unicode whitespace characters, including zero-width spaces, BOM, etc.
 // Covers: standard whitespace, non-breaking spaces, em/en spaces, ideographic space,
 // zero-width spaces (U+200B, U+200C, U+200D), word joiner (U+2060), BOM (U+FEFF), etc.
-const UNICODE_WHITESPACE_RE = /^[\s\u00A0\u1680\u180E\u2000-\u200D\u2028\u2029\u202F\u205F\u2060\u3000\uFEFF]+|[\s\u00A0\u1680\u180E\u2000-\u200D\u2028\u2029\u202F\u205F\u2060\u3000\uFEFF]+$/g;
+const UNICODE_WHITESPACE_RE =
+  /^[\s\u00A0\u1680\u180E\u2000-\u200D\u2028\u2029\u202F\u205F\u2060\u3000\uFEFF]+|[\s\u00A0\u1680\u180E\u2000-\u200D\u2028\u2029\u202F\u205F\u2060\u3000\uFEFF]+$/g;
 function stripWhitespace(text: string): string {
-    return text.replace(UNICODE_WHITESPACE_RE, '');
+  return text.replace(UNICODE_WHITESPACE_RE, '');
 }
 
 // Check if text contains only ASCII printable characters (codes 32-126)
 // i.e. it is "English-like" content
 function isAsciiOnly(text: string): boolean {
-    return /^[\x20-\x7E\s]*$/.test(text);
+  return /^[\x20-\x7E\s]*$/.test(text);
 }
 
 // Count meaningful characters in text, excluding punctuation and symbols.
 // Only counts: letters (a-z, A-Z), digits (0-9), CJK characters, Japanese kana, Korean, etc.
 function countMeaningfulChars(text: string): number {
-    const matches = text.match(/[a-zA-Z0-9\u4e00-\u9fff\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF]/g);
-    return matches ? matches.length : 0;
+  const matches = text.match(/[a-zA-Z0-9\u4e00-\u9fff\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF]/g);
+  return matches ? matches.length : 0;
 }
 
 // 检查节点是否为短文本（三个单词以内）
 function isShortTextNode(node: any): boolean {
-    if (!node || !node.textContent) return false;
+  if (!node || !node.textContent) return false;
 
-    const text = stripWhitespace(node.textContent);
-    if (!text) return false;
+  const text = stripWhitespace(node.textContent);
+  if (!text) return false;
 
-    // 短文本的判断标准：
-    // 1. 最多包含三个单词（以空格、制表符、换行符等空白字符分隔）
-    // 2. 对于中文，按字符数判断（三个中文字符以内）
-    // 3. 排除常见的标点符号和特殊字符
+  // 短文本的判断标准：
+  // 1. 最多包含三个单词（以空格、制表符、换行符等空白字符分隔）
+  // 2. 对于中文，按字符数判断（三个中文字符以内）
+  // 3. 排除常见的标点符号和特殊字符
 
-    // 去除首尾空白字符（包含所有 Unicode 空白）
-    const trimmedText = text;
-    
-    // 检查是否为常见的标点符号或特殊字符
-    if (/^[,.!?;:'"()\[\]{}<>@#$%^&*_+=\-|~`]+$/.test(trimmedText)) {
-        return false;
-    }
+  // 去除首尾空白字符（包含所有 Unicode 空白）
+  const trimmedText = text;
 
-    // Check if text contains letters, CJK characters, or Japanese kana
-    // (already handled numeric content in isMainlyNumericContent)
-    const hasLetterOrCJK = /[a-zA-Z\u4e00-\u9fff\u3040-\u309F\u30A0-\u30FF]/.test(trimmedText);
-    if (!hasLetterOrCJK) {
-        return false;
-    }
-
-    // For non-ASCII (non-English) text, including CJK characters and Japanese kana,
-    // as long as there are at least 3 meaningful characters (excluding symbols), allow translation
-    if (!isAsciiOnly(text)) {
-        return countMeaningfulChars(text) < 3;
-    }
-
-    // Split words (supports mixed English/Chinese)
-    // For English: split by whitespace
-    // For Chinese: each character can be treated as a word
-    const words = trimmedText.split(/\s+/);
-    let wordCount = 0;
-    
-    for (const word of words) {
-        if (word.length === 0) continue;
-        
-        // Skip words that are purely punctuation/symbols (no meaningful characters)
-        if (countMeaningfulChars(word) === 0) {
-            continue;
-        }
-        
-        // For CJK text, each CJK character can be treated as a word
-        const chineseChars = word.match(/[一-鿿]/g);
-        if (chineseChars) {
-            if (chineseChars.length <= 3) {
-                wordCount += 1;
-            } else {
-                return false;
-            }
-        } else {
-            wordCount += 1;
-        }
-        
-        if (wordCount > 3) {
-            return false;
-        }
-    }
-
-    // 检查总单词数是否在1-3个之间
-    if (wordCount >= 1 && wordCount <= 3) {
-        // 额外检查：排除连字符连接的复合词（视为一个单词）
-        // 但如果文本本身就是由多个连字符单词组成，应该不算短文本
-        const hasMultipleHyphenatedWords = /([a-zA-Z]+-[a-zA-Z]+){2,}/.test(trimmedText);
-        if (hasMultipleHyphenatedWords) {
-            return false;
-        }
-        
-        // 排除常见的缩写和特殊格式
-        if (trimmedText.includes('...') || trimmedText.includes('..')) {
-            return false;
-        }
-        
-        // Length check: short text usually isn't too long (based on meaningful chars, excluding symbols)
-        if (countMeaningfulChars(trimmedText) > 100) {
-            return false;
-        }
-        
-        return true;
-    }
-    
+  // 检查是否为常见的标点符号或特殊字符
+  if (/^[,.!?;:'"()\[\]{}<>@#$%^&*_+=\-|~`]+$/.test(trimmedText)) {
     return false;
+  }
+
+  // Check if text contains letters, CJK characters, or Japanese kana
+  // (already handled numeric content in isMainlyNumericContent)
+  const hasLetterOrCJK = /[a-zA-Z\u4e00-\u9fff\u3040-\u309F\u30A0-\u30FF]/.test(trimmedText);
+  if (!hasLetterOrCJK) {
+    return false;
+  }
+
+  // For non-ASCII (non-English) text, including CJK characters and Japanese kana,
+  // as long as there are at least 3 meaningful characters (excluding symbols), allow translation
+  if (!isAsciiOnly(text)) {
+    return countMeaningfulChars(text) < 3;
+  }
+
+  // Split words (supports mixed English/Chinese)
+  // For English: split by whitespace
+  // For Chinese: each character can be treated as a word
+  const words = trimmedText.split(/\s+/);
+  let wordCount = 0;
+
+  for (const word of words) {
+    if (word.length === 0) continue;
+
+    // Skip words that are purely punctuation/symbols (no meaningful characters)
+    if (countMeaningfulChars(word) === 0) {
+      continue;
+    }
+
+    // For CJK text, each CJK character can be treated as a word
+    const chineseChars = word.match(/[一-鿿]/g);
+    if (chineseChars) {
+      if (chineseChars.length <= 3) {
+        wordCount += 1;
+      } else {
+        return false;
+      }
+    } else {
+      wordCount += 1;
+    }
+
+    if (wordCount > 3) {
+      return false;
+    }
+  }
+
+  // 检查总单词数是否在1-3个之间
+  if (wordCount >= 1 && wordCount <= 3) {
+    // 额外检查：排除连字符连接的复合词（视为一个单词）
+    // 但如果文本本身就是由多个连字符单词组成，应该不算短文本
+    const hasMultipleHyphenatedWords = /([a-zA-Z]+-[a-zA-Z]+){2,}/.test(trimmedText);
+    if (hasMultipleHyphenatedWords) {
+      return false;
+    }
+
+    // 排除常见的缩写和特殊格式
+    if (trimmedText.includes('...') || trimmedText.includes('..')) {
+      return false;
+    }
+
+    // Length check: short text usually isn't too long (based on meaningful chars, excluding symbols)
+    if (countMeaningfulChars(trimmedText) > 100) {
+      return false;
+    }
+
+    return true;
+  }
+
+  return false;
 }
 
 // 检查文本长度
 function checkTextSize(node: any): boolean {
-    // 1. 若文本内容长度超过 3072
-    // 2. 或者 outerHTML 长度超过 4096，都视为过长
-    // 3. 对于英文（纯ASCII），少于16个字符视为过短
-    // 4. 对于非英文，少于3个字符视为过短
-    const text = node.textContent || '';
-    const stripped = stripWhitespace(text);
-    // Use meaningful character count (excluding symbols) for minimum length check
-    const meaningfulLen = countMeaningfulChars(stripped);
-    const minLength = isAsciiOnly(stripped) ? 16 : 3;
-    return text.length > 3072 ||
-        (node.outerHTML && node.outerHTML.length > 4096) ||
-        meaningfulLen < minLength;
+  // 1. 若文本内容长度超过 3072
+  // 2. 或者 outerHTML 长度超过 4096，都视为过长
+  // 3. 对于英文（纯ASCII），少于16个字符视为过短
+  // 4. 对于非英文，少于3个字符视为过短
+  const text = node.textContent || '';
+  const stripped = stripWhitespace(text);
+  // Use meaningful character count (excluding symbols) for minimum length check
+  const meaningfulLen = countMeaningfulChars(stripped);
+  const minLength = isAsciiOnly(stripped) ? 16 : 3;
+  return (
+    text.length > 3072 ||
+    (node.outerHTML && node.outerHTML.length > 4096) ||
+    meaningfulLen < minLength
+  );
 }
 
 // 检查节点内容是否主要为数字
 function isMainlyNumericContent(node: any): boolean {
-    if (!node || !node.textContent) return false;
+  if (!node || !node.textContent) return false;
 
-    const text = stripWhitespace(node.textContent);
-    if (!text) return false;
+  const text = stripWhitespace(node.textContent);
+  if (!text) return false;
 
-    // 如果内容很短，且是纯数字格式，则跳过
-    // 对于短文本，直接判断整体是否为数字格式
-    if (text.length < 30 && isNumericContent(text)) return true;
+  // 如果内容很短，且是纯数字格式，则跳过
+  // 对于短文本，直接判断整体是否为数字格式
+  if (text.length < 30 && isNumericContent(text)) return true;
 
-    // 检查是否为用户名或用户ID格式
-    if (isUserIdentifier(text)) return true;
+  // 检查是否为用户名或用户ID格式
+  if (isUserIdentifier(text)) return true;
 
-    // 对于较长的内容，检查是否主要为数字格式
-    // 处理节点可能含有多个文本子节点的情况
-    // 这有助于更精确地识别混合内容中的数字部分
-    const textNodes = [];
-    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null);
-    let textNode;
-    while (textNode = walker.nextNode()) {
-        const nodeText = textNode.textContent ? stripWhitespace(textNode.textContent) : '';
-        if (nodeText) {
-            textNodes.push(nodeText);
-        }
+  // 对于较长的内容，检查是否主要为数字格式
+  // 处理节点可能含有多个文本子节点的情况
+  // 这有助于更精确地识别混合内容中的数字部分
+  const textNodes = [];
+  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null);
+  let textNode;
+  while ((textNode = walker.nextNode())) {
+    const nodeText = textNode.textContent ? stripWhitespace(textNode.textContent) : '';
+    if (nodeText) {
+      textNodes.push(nodeText);
     }
+  }
 
-    // 如果只有一个文本节点且为数字，则跳过翻译
-    if (textNodes.length === 1 && isNumericContent(textNodes[0])) return true;
+  // 如果只有一个文本节点且为数字，则跳过翻译
+  if (textNodes.length === 1 && isNumericContent(textNodes[0])) return true;
 
-    // 如果所有文本节点都是数字，则跳过翻译
-    // 这可能是表格中的数字列或者纯数字列表等
-    if (textNodes.length > 0 && textNodes.every(t => isNumericContent(t))) return true;
+  // 如果所有文本节点都是数字，则跳过翻译
+  // 这可能是表格中的数字列或者纯数字列表等
+  if (textNodes.length > 0 && textNodes.every((t) => isNumericContent(t))) return true;
 
-    // 否则不跳过，允许翻译
-    return false;
+  // 否则不跳过，允许翻译
+  return false;
 }
 
 /**
  * 检查文本是否为用户标识符（用户名、ID等）
  */
 function isUserIdentifier(text: string): boolean {
-    if (!text || typeof text !== 'string') return false;
+  if (!text || typeof text !== 'string') return false;
 
-    const trimmedText = stripWhitespace(text);
+  const trimmedText = stripWhitespace(text);
 
-    // 检查是否为社交媒体用户名格式
-    if (/^@\w+/.test(trimmedText)) return true;  // Twitter格式：@username
-    if (/^u\/\w+/.test(trimmedText)) return true; // Reddit格式：u/username
+  // 检查是否为社交媒体用户名格式
+  if (/^@\w+/.test(trimmedText)) return true; // Twitter格式：@username
+  if (/^u\/\w+/.test(trimmedText)) return true; // Reddit格式：u/username
 
-    // 检查是否为x.com或twitter.com的ID格式
-    if (/^id@https?:\/\/(x\.com|twitter\.com)\/[\w-]+\/status\/[0-9]+/.test(trimmedText)) return true;
+  // 检查是否为x.com或twitter.com的ID格式
+  if (/^id@https?:\/\/(x\.com|twitter\.com)\/[\w-]+\/status\/[0-9]+/.test(trimmedText)) return true;
 
-    // 检查是否包含"关注"相关内容
-    if (/关注.*\w+/.test(trimmedText) || /Follow.*\w+/.test(trimmedText)) return true;
+  // 检查是否包含"关注"相关内容
+  if (/关注.*\w+/.test(trimmedText) || /Follow.*\w+/.test(trimmedText)) return true;
 
-    // 检查是否为纯粹的用户名格式（字母、数字、下划线组合）
-    if (/^[A-Za-z0-9_]{1,15}$/.test(trimmedText)) return true;
+  // 检查是否为纯粹的用户名格式（字母、数字、下划线组合）
+  if (/^[A-Za-z0-9_]{1,15}$/.test(trimmedText)) return true;
 
-    // 特殊格式：带点击动作的用户名
-    if (/点击.*\w+/.test(trimmedText) && trimmedText.length < 50) return true;
+  // 特殊格式：带点击动作的用户名
+  if (/点击.*\w+/.test(trimmedText) && trimmedText.length < 50) return true;
 
-    return false;
+  return false;
 }
 
 /**
  * 检查文本是否为纯数字或标准数字格式
- * 
+ *
  * 识别以下数字格式：
  * 1. 整数 (例如: 12345, -123)
  * 2. 带千位分隔符的数字 (例如: 1,234,567)
@@ -420,7 +481,7 @@ function isUserIdentifier(text: string): boolean {
  * 11. ID格式 (例如: id@x.com/user/status/123456789)
  * 12. 用户名格式 (例如: @username, gunsnrosesgirl3)
  * 13. #数字 格式的
- * 
+ *
  * 这些格式的数字和用户标识符通常不需要翻译，保持原样更有利于页面理解。
  *
  * 数字映射规则（只对纯数字生效）：
@@ -431,211 +492,223 @@ function isUserIdentifier(text: string): boolean {
  * 会把非阿拉伯数字脚本也当成数字而错误地跳过翻译。
  */
 export function isNumericContent(text: string): boolean {
-    if (!text || typeof text !== 'string') return false;
+  if (!text || typeof text !== 'string') return false;
 
-    // Strip all Unicode whitespace characters
-    const trimmedText = stripWhitespace(text);
-    if (!trimmedText) return false;
+  // Strip all Unicode whitespace characters
+  const trimmedText = stripWhitespace(text);
+  if (!trimmedText) return false;
 
-    // 首先检查是否为用户标识符
-    if (isUserIdentifier(trimmedText)) return true;
+  // 首先检查是否为用户标识符
+  if (isUserIdentifier(trimmedText)) return true;
 
-    // 如果包含多个单词，则不视为纯数字内容
-    if (/\s+/.test(trimmedText.replace(/[0-9,.\-%+]/g, ''))) return false;
+  // 如果包含多个单词，则不视为纯数字内容
+  if (/\s+/.test(trimmedText.replace(/[0-9,.\-%+]/g, ''))) return false;
 
-    // 检查是否为纯数字（仅 ASCII 阿拉伯数字）
-    if (/^-?[0-9]+$/.test(trimmedText)) return true;
+  // 检查是否为纯数字（仅 ASCII 阿拉伯数字）
+  if (/^-?[0-9]+$/.test(trimmedText)) return true;
 
-    // 检查是否为标准数字格式：带逗号的数字 (例如: 1,234,567)
-    if (/^-?([0-9]{1,3}(,[0-9]{3})+)$/.test(trimmedText)) return true;
+  // 检查是否为标准数字格式：带逗号的数字 (例如: 1,234,567)
+  if (/^-?([0-9]{1,3}(,[0-9]{3})+)$/.test(trimmedText)) return true;
 
-    // 检查是否为范围数字 (例如: 1-123)
-    if (/^[0-9]+\s*[-~]\s*[0-9]+$/.test(trimmedText)) return true;
+  // 检查是否为范围数字 (例如: 1-123)
+  if (/^[0-9]+\s*[-~]\s*[0-9]+$/.test(trimmedText)) return true;
 
-    // 检查是否为小数
-    if (/^-?[0-9]+\.[0-9]+$/.test(trimmedText)) return true;
+  // 检查是否为小数
+  if (/^-?[0-9]+\.[0-9]+$/.test(trimmedText)) return true;
 
-    // 检查是否为百分比
-    if (/^-?[0-9]+(\.[0-9]+)?%$/.test(trimmedText)) return true;
+  // 检查是否为百分比
+  if (/^-?[0-9]+(\.[0-9]+)?%$/.test(trimmedText)) return true;
 
-    // 检查是否为科学计数法 (例如: 1.23e+4)
-    if (/^-?[0-9]+(\.[0-9]+)?(e[-+][0-9]+)?$/i.test(trimmedText)) return true;
+  // 检查是否为科学计数法 (例如: 1.23e+4)
+  if (/^-?[0-9]+(\.[0-9]+)?(e[-+][0-9]+)?$/i.test(trimmedText)) return true;
 
-    // 检查是否为带货币符号的金额 (例如: $123.45, €123, ¥123)
-    if (/^[$€¥£₹₽₩]?\s*-?[0-9]+(,[0-9]{3})*(\.[0-9]+)?$/.test(trimmedText)) return true;
+  // 检查是否为带货币符号的金额 (例如: $123.45, €123, ¥123)
+  if (/^[$€¥£₹₽₩]?\s*-?[0-9]+(,[0-9]{3})*(\.[0-9]+)?$/.test(trimmedText)) return true;
 
-    // 检查是否为日期时间格式 (仅考虑常见的数字日期格式)
-    // 匹配 YYYY-MM-DD, YYYY/MM/DD, DD-MM-YYYY, DD/MM/YYYY, MM-DD-YYYY, MM/DD/YYYY
-    if (/^([0-9]{4}[-/][0-9]{1,2}[-/][0-9]{1,2}|[0-9]{1,2}[-/][0-9]{1,2}[-/][0-9]{4}|[0-9]{1,2}[-/][0-9]{1,2}[-/][0-9]{1,2})$/.test(trimmedText)) return true;
+  // 检查是否为日期时间格式 (仅考虑常见的数字日期格式)
+  // 匹配 YYYY-MM-DD, YYYY/MM/DD, DD-MM-YYYY, DD/MM/YYYY, MM-DD-YYYY, MM/DD/YYYY
+  if (
+    /^([0-9]{4}[-/][0-9]{1,2}[-/][0-9]{1,2}|[0-9]{1,2}[-/][0-9]{1,2}[-/][0-9]{4}|[0-9]{1,2}[-/][0-9]{1,2}[-/][0-9]{1,2})$/.test(
+      trimmedText,
+    )
+  )
+    return true;
 
-    // 匹配时间格式 HH:MM:SS, HH:MM
-    if (/^[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?$/.test(trimmedText)) return true;
+  // 匹配时间格式 HH:MM:SS, HH:MM
+  if (/^[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?$/.test(trimmedText)) return true;
 
-    // 匹配版本号 (例如: 1.0.0, 2.3.5-beta)
-    if (/^[0-9]+(\.[0-9]+){1,3}(-[a-zA-Z0-9]+)?$/.test(trimmedText)) return true;
+  // 匹配版本号 (例如: 1.0.0, 2.3.5-beta)
+  if (/^[0-9]+(\.[0-9]+){1,3}(-[a-zA-Z0-9]+)?$/.test(trimmedText)) return true;
 
-    // 匹配社交媒体的ID格式
-    if (/^id@https?:\/\/(x\.com|twitter\.com)\/[\w-]+\/status\/[0-9]+/.test(trimmedText)) return true;
+  // 匹配社交媒体的ID格式
+  if (/^id@https?:\/\/(x\.com|twitter\.com)\/[\w-]+\/status\/[0-9]+/.test(trimmedText)) return true;
 
-    // 匹配常见的数字ID格式
-    if (/^ID[:：]?\s*[0-9]+$/.test(trimmedText)) return true;
-    if (/^No[\.:]?\s*[0-9]+$/i.test(trimmedText)) return true;
+  // 匹配常见的数字ID格式
+  if (/^ID[:：]?\s*[0-9]+$/.test(trimmedText)) return true;
+  if (/^No[\.:]?\s*[0-9]+$/i.test(trimmedText)) return true;
 
-    // #数字 格式的
-    if (/^#[0-9]+$/.test(trimmedText)) return true;
+  // #数字 格式的
+  if (/^#[0-9]+$/.test(trimmedText)) return true;
 
-    return false;
+  return false;
 }
 
 // 检查是否为按钮
 function isButton(node: any, tag: string): boolean {
-    // 1. 若当前标签就是 button
-    // 2. 或者当前标签为 span 并且其父节点为 button，则视为按钮
-    return tag === 'button' ||
-        (tag === 'span' && node.parentNode?.tagName?.toLowerCase() === 'button');
+  // 1. 若当前标签就是 button
+  // 2. 或者当前标签为 span 并且其父节点为 button，则视为按钮
+  return (
+    tag === 'button' || (tag === 'span' && node.parentNode?.tagName?.toLowerCase() === 'button')
+  );
 }
 
 // 处理按钮翻译
 function handleButtonTranslation(node: any): void {
-    // 1. 若文本非空，则调用 handleBtnTranslation 进行按钮文本翻译处理
-    if (stripWhitespace(node.textContent || '')) {
-        handleBtnTranslation(node);
-    }
+  // 1. 若文本非空，则调用 handleBtnTranslation 进行按钮文本翻译处理
+  if (stripWhitespace(node.textContent || '')) {
+    handleBtnTranslation(node);
+  }
 }
 
 // 检查是否为内联元素
 function isInlineElement(node: any, tag: string): boolean {
-    // 1. 判断是否在 inlineSet 中
-    // 2. 判断是否文本节点
-    // 3. 检查子元素中是否包含非内联元素
-    return inlineSet.has(tag) ||
-        node.nodeType === Node.TEXT_NODE ||
-        detectChildMeta(node);
+  // 1. 判断是否在 inlineSet 中
+  // 2. 判断是否文本节点
+  // 3. 检查子元素中是否包含非内联元素
+  return inlineSet.has(tag) || node.nodeType === Node.TEXT_NODE || detectChildMeta(node);
 }
 
 // 查找可翻译的父节点
 function findTranslatableParent(node: any): any {
-    // 1. 递归调用 grabNode 查找父节点是否可翻译
-    // 2. 若父节点不可翻译，则返回当前节点
-    const parentResult = grabNode(node.parentNode);
-    return parentResult || node;
+  // 1. 递归调用 grabNode 查找父节点是否可翻译
+  // 2. 若父节点不可翻译，则返回当前节点
+  const parentResult = grabNode(node.parentNode);
+  return parentResult || node;
 }
 
 // 处理首行文本
 function handleFirstLineText(node: any): boolean {
-    // 1. 遍历子节点，找到首个文本节点
-    // 2. 若存在可翻译文本，则通过 browser.runtime.sendMessage 进行翻译
-    // 3. 翻译成功后，替换该文本；出现错误时，打印错误日志
-    let child = node.firstChild;
-    while (child) {
-        if (child.nodeType === Node.TEXT_NODE && child.textContent && stripWhitespace(child.textContent)) {
-            // 数字映射：纯数字（仅 ASCII 阿拉伯数字）不翻译，避免提交 "6" 等原始数字
-            if (isNumericContent(child.textContent)) return false;
-            browser.runtime.sendMessage({
-                context: document.title,
-                origin: child.textContent
-            })
-                .then((text: string) => child.textContent = text)
-                .catch((error: any) => console.error('翻译失败:', error));
-            return false;
-        }
-        child = child.nextSibling;
+  // 1. 遍历子节点，找到首个文本节点
+  // 2. 若存在可翻译文本，则通过 browser.runtime.sendMessage 进行翻译
+  // 3. 翻译成功后，替换该文本；出现错误时，打印错误日志
+  let child = node.firstChild;
+  while (child) {
+    if (
+      child.nodeType === Node.TEXT_NODE &&
+      child.textContent &&
+      stripWhitespace(child.textContent)
+    ) {
+      // 数字映射：纯数字（仅 ASCII 阿拉伯数字）不翻译，避免提交 "6" 等原始数字
+      if (isNumericContent(child.textContent)) return false;
+      browser.runtime
+        .sendMessage({
+          context: document.title,
+          origin: child.textContent,
+        })
+        .then((text: string) => (child.textContent = text))
+        .catch((error: any) => console.error('翻译失败:', error));
+      return false;
     }
-    return false;
+    child = child.nextSibling;
+  }
+  return false;
 }
 
 // 检测子元素中是否包含指定标签以外的元素
 function detectChildMeta(parent: any): boolean {
-    // 1. 逐个检查子节点
-    // 2. 若发现非内联元素则返回 false；否则全部检查通过则返回 true
-    let child = parent.firstChild;
-    while (child) {
-        if (child.nodeType === Node.ELEMENT_NODE && !inlineSet.has(child.nodeName.toLowerCase())) {
-            return false;
-        }
-        child = child.nextSibling;
+  // 1. 逐个检查子节点
+  // 2. 若发现非内联元素则返回 false；否则全部检查通过则返回 true
+  let child = parent.firstChild;
+  while (child) {
+    if (child.nodeType === Node.ELEMENT_NODE && !inlineSet.has(child.nodeName.toLowerCase())) {
+      return false;
     }
-    return true;
+    child = child.nextSibling;
+  }
+  return true;
 }
 
 // 仅译文模式下获取 LLM 应当翻译的标准 HTML
 export function LLMStandardHTML(node: any) {
-    // 1. 初始化空字符串 text
-    // 2. 遍历子节点
-    // 3. 若为文本节点，拼接其文本内容
-    // 4. 若为元素节点且在 inlineSet 中，拼接其 outerHTML（移除不可见内容）
-    // 5. 否则继续递归处理子节点
-    let text = "";
-    node.childNodes.forEach((child: any) => {
-        if (child.nodeType === Node.TEXT_NODE) {
-            text += child.nodeValue;
-        } else if (child.nodeType === Node.ELEMENT_NODE) {
-            const tag = child.tagName.toLowerCase();
-            if (inlineSet.has(tag)) {
-                if (tag === 'img' || tag === 'br' || tag === 'wbr') {
-                    // 对于这些标签，我们只保留基本结构，移除可能引起多余翻译的属性
-                    const clone = child.cloneNode(false) as Element;
-                    clone.removeAttribute('alt');
-                    clone.removeAttribute('title');
-                    clone.removeAttribute('aria-label');
-                    text += clone.outerHTML;
-                } else {
-                    text += child.outerHTML;
-                }
-            } else {
-                text += LLMStandardHTML(child);
-            }
+  // 1. 初始化空字符串 text
+  // 2. 遍历子节点
+  // 3. 若为文本节点，拼接其文本内容
+  // 4. 若为元素节点且在 inlineSet 中，拼接其 outerHTML（移除不可见内容）
+  // 5. 否则继续递归处理子节点
+  let text = '';
+  node.childNodes.forEach((child: any) => {
+    if (child.nodeType === Node.TEXT_NODE) {
+      text += child.nodeValue;
+    } else if (child.nodeType === Node.ELEMENT_NODE) {
+      const tag = child.tagName.toLowerCase();
+      if (inlineSet.has(tag)) {
+        if (tag === 'img' || tag === 'br' || tag === 'wbr') {
+          // 对于这些标签，我们只保留基本结构，移除可能引起多余翻译的属性
+          const clone = child.cloneNode(false) as Element;
+          clone.removeAttribute('alt');
+          clone.removeAttribute('title');
+          clone.removeAttribute('aria-label');
+          text += clone.outerHTML;
+        } else {
+          text += child.outerHTML;
         }
-    });
-    return text;
+      } else {
+        text += LLMStandardHTML(child);
+      }
+    }
+  });
+  return text;
 }
 
 export function beautyHTML(text: string): string {
-    // 1. 先替换 SVG 中的大小写敏感词
-    // 2. 再使用 js-beautify 格式化 HTML
-    text = replaceSensitiveWords(text);
-    return html(text)
+  // 1. 先替换 SVG 中的大小写敏感词
+  // 2. 再使用 js-beautify 格式化 HTML
+  text = replaceSensitiveWords(text);
+  return html(text);
 }
 
 // 替换 svg 标签中的一些大小写敏感的词（html 不区分大小写，但 svg 标签区分大小写）
 function replaceSensitiveWords(text: string): string {
-    // 1. 使用正则匹配大小写敏感词
-    // 2. 逐个替换为正确大小写形式
-    return text.replace(/viewbox|preserveaspectratio|clippathunits|gradienttransform|patterncontentunits|lineargradient|clippath/gi, (match) => {
-        switch (match.toLowerCase()) {
-            case 'viewbox':
-                return 'viewBox';
-            case 'preserveaspectratio':
-                return 'preserveAspectRatio';
-            case 'clippathunits':
-                return 'clipPathUnits';
-            case 'gradienttransform':
-                return 'gradientTransform';
-            case 'patterncontentunits':
-                return 'patternContentUnits';
-            case 'lineargradient':
-                return 'linearGradient';
-            case 'clippath':
-                return 'clipPath';
-            default:
-                return match;
-        }
-    });
+  // 1. 使用正则匹配大小写敏感词
+  // 2. 逐个替换为正确大小写形式
+  return text.replace(
+    /viewbox|preserveaspectratio|clippathunits|gradienttransform|patterncontentunits|lineargradient|clippath/gi,
+    (match) => {
+      switch (match.toLowerCase()) {
+        case 'viewbox':
+          return 'viewBox';
+        case 'preserveaspectratio':
+          return 'preserveAspectRatio';
+        case 'clippathunits':
+          return 'clipPathUnits';
+        case 'gradienttransform':
+          return 'gradientTransform';
+        case 'patterncontentunits':
+          return 'patternContentUnits';
+        case 'lineargradient':
+          return 'linearGradient';
+        case 'clippath':
+          return 'clipPath';
+        default:
+          return match;
+      }
+    },
+  );
 }
 
 // 移除特定样式
 export function checkAndRemoveStyle(node: any, styleProperty: any) {
-    // 1. 若节点存在样式且对应属性不为 undefined，则清空该属性
-    if (node.style && node.style[styleProperty] !== undefined) {
-        node.style[styleProperty] = '';
-    }
+  // 1. 若节点存在样式且对应属性不为 undefined，则清空该属性
+  if (node.style && node.style[styleProperty] !== undefined) {
+    node.style[styleProperty] = '';
+  }
 }
 
 // 移除截断样式
 export function smashTruncationStyle(node: any) {
-    // 1. 先调用 checkAndRemoveStyle 移除 webkitLineClamp 属性
-    // 2. 将节点的相关样式设为 'unset'
-    checkAndRemoveStyle(node, 'webkitLineClamp');
-    node.style.webkitLineClamp = 'unset';
-    node.style.maxHeight = 'unset';
+  // 1. 先调用 checkAndRemoveStyle 移除 webkitLineClamp 属性
+  // 2. 将节点的相关样式设为 'unset'
+  checkAndRemoveStyle(node, 'webkitLineClamp');
+  node.style.webkitLineClamp = 'unset';
+  node.style.maxHeight = 'unset';
 }

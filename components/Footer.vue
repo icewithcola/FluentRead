@@ -9,10 +9,10 @@
 
       <div class="right-section">
         <el-tooltip content="清除翻译缓存" placement="top">
-          <el-button 
-            link 
-            :type="clearStatusType" 
-            @click="clearCache" 
+          <el-button
+            link
+            :type="clearStatusType"
+            @click="clearCache"
             :disabled="isClearing"
             class="action-btn"
           >
@@ -26,9 +26,9 @@
         </el-tooltip>
 
         <el-tooltip content="GitHub 开源" placement="top">
-          <el-link 
-            href="https://fluent.thinkstu.com/" 
-            target="_blank" 
+          <el-link
+            href="https://fluent.thinkstu.com/"
+            target="_blank"
             :underline="false"
             class="action-btn"
           >
@@ -43,7 +43,7 @@
         </el-tooltip>
       </div>
     </div>
-    
+
     <!-- 赞赏码弹窗 -->
     <el-dialog
       v-model="showDonate"
@@ -54,9 +54,7 @@
       class="donate-dialog-custom"
     >
       <div class="donate-content">
-        <p class="donate-text">
-          如果觉得好用，<br>欢迎请作者喝一杯咖啡 ☕️
-        </p>
+        <p class="donate-text">如果觉得好用，<br />欢迎请作者喝一杯咖啡 ☕️</p>
         <div class="qrcode-container">
           <img src="/misc/approve.jpg" alt="赞赏码" class="qrcode-image" />
         </div>
@@ -68,8 +66,15 @@
 
 <script lang="ts" setup>
 import { computed, reactive, ref } from 'vue';
-import { Star, Loading, Coffee, Refresh, CircleCheckFilled, Warning } from "@element-plus/icons-vue";
-import { Config } from "../entrypoints/utils/model";
+import {
+  Star,
+  Loading,
+  Coffee,
+  Refresh,
+  CircleCheckFilled,
+  Warning,
+} from '@element-plus/icons-vue';
+import { Config } from '../entrypoints/utils/model';
 import { storage } from '@wxt-dev/storage';
 import browser from 'webextension-polyfill';
 
@@ -85,7 +90,7 @@ const clearStatusType = computed(() => {
 
 async function clearCache() {
   if (isClearing.value) return;
-  
+
   try {
     isClearing.value = true;
     clearResult.value = '';
@@ -173,7 +178,7 @@ const computedCount = computed(() => localConfig.count);
 }
 
 .donate-btn:hover {
-  color: #E6A23C; /* Warning color for coffee */
+  color: #e6a23c; /* Warning color for coffee */
 }
 
 .donate-content {
@@ -195,7 +200,7 @@ const computedCount = computed(() => localConfig.count);
   height: 180px;
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   margin-bottom: 12px;
 }
 

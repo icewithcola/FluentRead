@@ -14,7 +14,9 @@
 }
 
 /* 全局基础前景/背景，确保 Popup 与页面根节点使用变量 */
-html, body, #app {
+html,
+body,
+#app {
   background-color: var(--fr-bg-color);
   color: var(--fr-text-color);
 }
@@ -149,7 +151,10 @@ html, body, #app {
 
 /* 过渡动画 */
 * {
-  transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+  transition:
+    background-color 0.3s,
+    color 0.3s,
+    border-color 0.3s;
 }
 
 /* 下拉菜单分组样式 */
@@ -175,4 +180,4 @@ html, body, #app {
 .el-select-dropdown__item.selected {
   color: var(--el-color-primary) !important;
   font-weight: bold;
-} 
+}

@@ -26,7 +26,6 @@ export function enqueueTranslation<T>(translationTask: () => Promise<T>): Promis
   return new Promise((resolve, reject) => {
     // 创建任务包装器，在任务完成后处理队列状态
     const taskWrapper = async () => {
-      
       try {
         // 执行实际的翻译任务
         const result = await translationTask();
@@ -39,7 +38,6 @@ export function enqueueTranslation<T>(translationTask: () => Promise<T>): Promis
         // 无论成功失败，都需要减少活跃任务计数并处理队列
         activeTranslations--;
         processQueue();
-        
       }
     };
 
@@ -75,7 +73,6 @@ function processQueue() {
  * 当页面切换或用户手动停止翻译时调用
  */
 export function clearTranslationQueue() {
-  
   pendingTranslations = [];
   // 不重置activeTranslations，让活跃的翻译任务自然完成
 }
@@ -91,7 +88,7 @@ export function getQueueStatus() {
     pendingTranslations: pendingTranslations.length,
     maxConcurrent: maxConcurrent,
     isQueueFull: activeTranslations >= maxConcurrent,
-    totalTasksInProcess: activeTranslations + pendingTranslations.length
+    totalTasksInProcess: activeTranslations + pendingTranslations.length,
   };
 }
 

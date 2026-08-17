@@ -17,16 +17,20 @@ const isDev = process.env.NODE_ENV === 'development';
 /**
  * 翻译API的统一入口
  * 所有翻译请求都应该通过此函数发送，以便集中管理队列和重试逻辑
- * 
+ *
  * @param origin 原始文本
  * @param context 上下文信息，通常是页面标题
  * @param options 翻译选项
  * @returns 翻译结果的Promise
  */
-export async function translateText(origin: string, context: string = document.title, options: TranslateOptions = {}): Promise<string> {
+export async function translateText(
+  origin: string,
+  context: string = document.title,
+  options: TranslateOptions = {},
+): Promise<string> {
   const {
-    maxRetries = 3, 
-    retryDelay = 1000, 
+    maxRetries = 3,
+    retryDelay = 1000,
     timeout = 45000,
     useCache = config.useCache,
     bypassCacheRead = false,
@@ -61,12 +65,12 @@ export async function translateText(origin: string, context: string = document.t
         // 发送翻译请求给background脚本处理
         // Always call getCurrentPageSummary(); it returns "" if not ready yet
         const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
-        const result = await Promise.race([
+        const result = (await Promise.race([
           browser.runtime.sendMessage({ context, origin, pageSummary }),
-          new Promise<never>((_, reject) => 
-            setTimeout(() => reject(new Error('翻译请求超时')), timeout)
-          )
-        ]) as string;
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('翻译请求超时')), timeout),
+          ),
+        ])) as string;
 
         // 检查返回结果是否是错误对象
         if (result && typeof result === 'object') {
@@ -98,12 +102,12 @@ export async function translateText(origin: string, context: string = document.t
           if (isDev) {
             console.log(`[翻译API] 翻译失败，${retryCount + 1}/${maxRetries} 次重试，原因:`, error);
           }
-          
+
           // 等待一段时间后重试
-          await new Promise(resolve => setTimeout(resolve, retryDelay));
+          await new Promise((resolve) => setTimeout(resolve, retryDelay));
           return translationTask(retryCount + 1);
         }
-        
+
         // 超过最大重试次数，抛出异常
         throw error;
       }
@@ -162,13 +166,9 @@ export async function translateTextStream(
   origin: string,
   context: string = document.title,
   onChunk: (accumulated: string) => void,
-  options: TranslateOptions = {}
+  options: TranslateOptions = {},
 ): Promise<string> {
-  const {
-    timeout = 60000,
-    useCache = config.useCache,
-    bypassCacheRead = false,
-  } = options;
+  const { timeout = 60000, useCache = config.useCache, bypassCacheRead = false } = options;
 
   // Check if target language matches source
   if (detectlang(origin.replace(/[\s\u3000]/g, '')) === config.to) {
@@ -192,7 +192,7 @@ export async function translateTextStream(
 
   return enqueueTranslation(async () => {
     return new Promise<string>((resolve, reject) => {
-      const port = browser.runtime.connect({name: 'stream-translate'});
+      const port = browser.runtime.connect({ name: 'stream-translate' });
       let timeoutId: any = null;
       let settled = false;
 
@@ -260,7 +260,7 @@ export async function translateTextStream(
 
       // Send translation request with page summary context from content script
       const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
-      port.postMessage({context, origin, pageSummary});
+      port.postMessage({ context, origin, pageSummary });
     });
   });
 }

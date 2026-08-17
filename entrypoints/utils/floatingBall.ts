@@ -12,7 +12,7 @@ let isTranslated = false; // 添加状态变量跟踪翻译状态
 /**
  * 创建并挂载悬浮球
  * @param position 悬浮球位置 'left' | 'right'，如果不传入则使用配置中的值
- * @returns 
+ * @returns
  */
 export function mountFloatingBall(position?: 'left' | 'right') {
   // 如果配置禁用了悬浮球或已存在实例，则不创建
@@ -34,8 +34,7 @@ export function mountFloatingBall(position?: 'left' | 'right') {
   app = createApp(FloatingBall, {
     position: ballPosition,
     showMenu: true,
-    onDocClick: () => {
-    },
+    onDocClick: () => {},
     onSettingsClick: () => {
       browser.runtime.sendMessage({ type: 'openOptionsPage' });
     },
@@ -43,10 +42,9 @@ export function mountFloatingBall(position?: 'left' | 'right') {
     onPositionChanged: (newPosition: 'left' | 'right') => {
       // 保存位置到配置
       config.floatingBallPosition = newPosition;
-      
+
       // 保存配置到存储
       saveConfig();
-
     },
     // 添加翻译状态变化事件监听
     onTranslationToggle: (isTranslating: boolean) => {
@@ -60,20 +58,20 @@ export function mountFloatingBall(position?: 'left' | 'right') {
       } else if (!isTranslating && isTranslated) {
         // 触发翻译结束事件
         document.dispatchEvent(new CustomEvent('fluentread-translation-ended'));
-        
+
         // 恢复原文
         restoreOriginalContent();
         isTranslated = false;
-        
+
         // 恢复后确保状态同步
         floatingBallInstance.$el.classList.remove('is-translating');
       }
-    }
+    },
   });
 
   // 挂载应用
   floatingBallInstance = app.mount(container);
-  
+
   // 监听自定义事件，用于通过快捷键触发悬浮球
   document.addEventListener('fluentread-toggle-translation', toggleFloatingBallTranslation);
 
@@ -89,17 +87,17 @@ export function toggleFloatingBallTranslation() {
 
   const currentState = floatingBallInstance.isTranslating;
   const newState = !currentState;
-  
+
   // 触发对应的自定义事件
   if (newState) {
     document.dispatchEvent(new CustomEvent('fluentread-translation-started'));
   } else {
     document.dispatchEvent(new CustomEvent('fluentread-translation-ended'));
   }
-  
+
   // 更新悬浮球状态
   floatingBallInstance.isTranslating = newState;
-  
+
   // 更新UI状态 - 使用Vue实例的$el属性
   if (floatingBallInstance.$el) {
     if (newState) {
@@ -119,18 +117,18 @@ export function toggleFloatingBallTranslation() {
  */
 function handleFloatingBallClick() {
   if (!floatingBallInstance) return;
-  
+
   // 切换悬浮球翻译状态
   const newState = !floatingBallInstance.isTranslating;
   floatingBallInstance.isTranslating = newState;
-  
+
   // 触发对应的自定义事件
   if (newState) {
     document.dispatchEvent(new CustomEvent('fluentread-translation-started'));
   } else {
     document.dispatchEvent(new CustomEvent('fluentread-translation-ended'));
   }
-  
+
   // 更新UI状态 - 使用Vue实例的$el属性
   if (floatingBallInstance.$el) {
     if (newState) {
@@ -148,14 +146,14 @@ function handleFloatingBallClick() {
 // 悬浮球动画效果
 function addFloatingBallAnimation(type: 'translate' | 'restore') {
   if (!floatingBallInstance) return;
-  
+
   const ball = floatingBallInstance.element;
   const originalBackground = ball.style.background;
   const originalTransition = ball.style.transition;
-  
+
   // 设置过渡效果
   ball.style.transition = 'all 0.3s ease';
-  
+
   // 根据类型设置不同动画
   if (type === 'translate') {
     // 翻译激活动画
@@ -168,14 +166,14 @@ function addFloatingBallAnimation(type: 'translate' | 'restore') {
     ball.style.boxShadow = '0 0 15px rgba(76, 175, 80, 0.8)';
     ball.style.background = '#4caf50';
   }
-  
+
   // 恢复原状
   setTimeout(() => {
     if (!floatingBallInstance) return;
     ball.style.transform = '';
     ball.style.boxShadow = '';
     ball.style.background = originalBackground;
-    
+
     // 恢复原来的过渡设置
     setTimeout(() => {
       if (floatingBallInstance) {
@@ -202,15 +200,15 @@ export function unmountFloatingBall() {
   if (floatingBallInstance && app) {
     // 移除事件监听
     document.removeEventListener('fluentread-toggle-translation', toggleFloatingBallTranslation);
-    
+
     // 获取容器
     const container = document.getElementById('fluent-read-floating-ball-container');
-    
+
     // 卸载 Vue 应用
     app.unmount();
     floatingBallInstance = null;
     app = null;
-    
+
     // 移除容器
     if (container) {
       container.remove();
@@ -229,7 +227,7 @@ export function toggleFloatingBall() {
     config.disableFloatingBall = false;
     mountFloatingBall();
   }
-  
+
   // 保存配置到存储
   saveConfig();
 }
@@ -246,7 +244,7 @@ export function toggleFloatingBallPosition() {
   } else {
     config.floatingBallPosition = newPosition;
   }
-  
+
   // 保存配置到存储
   saveConfig();
-} 
+}

@@ -2,13 +2,13 @@
   <div class="popup-container">
     <el-container>
       <el-header class="no-padding" height="auto">
-        <Header/>
+        <Header />
       </el-header>
       <el-main class="main-content">
-        <Main/>
+        <Main />
       </el-main>
       <el-footer class="no-padding" height="auto">
-        <Footer/>
+        <Footer />
       </el-footer>
     </el-container>
   </div>
@@ -16,13 +16,12 @@
 
 <script lang="ts" setup>
 import Header from '../../components/Header.vue';
-import Main from "../../components/Main.vue";
-import Footer from "../../components/Footer.vue";
+import Main from '../../components/Main.vue';
+import Footer from '../../components/Footer.vue';
 import '../../styles/theme.css';
 // Element Plus 基础与暗色变量
 import 'element-plus/theme-chalk/base.css';
 import 'element-plus/theme-chalk/dark/css-vars.css';
-
 </script>
 
 <style scoped>

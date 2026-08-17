@@ -1,25 +1,38 @@
 <template>
   <teleport to="body">
     <!-- 小红点指示器 -->
-    <div v-if="showIndicator" 
-         class="fr-selection-indicator" 
-         :style="indicatorStyle" 
-         @mouseenter="handleMouseEnter"
-         @mouseleave="handleMouseLeave">
-    </div>
-    
+    <div
+      v-if="showIndicator"
+      class="fr-selection-indicator"
+      :style="indicatorStyle"
+      @mouseenter="handleMouseEnter"
+      @mouseleave="handleMouseLeave"
+    ></div>
+
     <!-- 翻译结果弹窗 -->
-    <div v-if="showTooltip" 
-         class="fr-translation-tooltip" 
-         :class="{ 'fr-dark-theme': isDarkTheme }"
-         :style="tooltipStyle"
-         @mouseenter="handleMouseEnterTooltip"
-         @mouseleave="handleMouseLeaveTooltip">
+    <div
+      v-if="showTooltip"
+      class="fr-translation-tooltip"
+      :class="{ 'fr-dark-theme': isDarkTheme }"
+      :style="tooltipStyle"
+      @mouseenter="handleMouseEnterTooltip"
+      @mouseleave="handleMouseLeaveTooltip"
+    >
       <div class="fr-tooltip-header">
         <span>翻译结果<small>（via 流畅阅读）</small></span>
         <div class="fr-tooltip-actions">
           <button class="fr-action-btn" @click="copyTranslation" title="复制译文">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
               <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
             </svg>
@@ -28,49 +41,135 @@
         </div>
       </div>
       <div class="fr-tooltip-content">
-        <div v-if="isLoading" :class="['fr-loading-spinner', { 'fr-static': !config.animations }]"></div>
+        <div
+          v-if="isLoading"
+          :class="['fr-loading-spinner', { 'fr-static': !config.animations }]"
+        ></div>
         <div v-else-if="error" class="fr-error-message">{{ error }}</div>
         <div v-else class="fr-translation-container">
           <!-- 原文显示（双语模式才显示） -->
-          <div v-if="config.selectionTranslatorMode === 'bilingual'" class="fr-original-text fr-no-select">
+          <div
+            v-if="config.selectionTranslatorMode === 'bilingual'"
+            class="fr-original-text fr-no-select"
+          >
             <pre>{{ selectedText }}</pre>
-            <button class="fr-text-audio-btn" @click="(e) => toggleAudio(selectedText, e)" title="播放/停止原文">
-              <svg v-if="isPlaying && currentPlayingText === selectedText" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <button
+              class="fr-text-audio-btn"
+              @click="(e) => toggleAudio(selectedText, e)"
+              title="播放/停止原文"
+            >
+              <svg
+                v-if="isPlaying && currentPlayingText === selectedText"
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
                 <rect x="6" y="4" width="4" height="16"></rect>
                 <rect x="14" y="4" width="4" height="16"></rect>
               </svg>
-              <svg v-else xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg
+                v-else
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
                 <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
                 <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
               </svg>
             </button>
           </div>
           <!-- 译文显示（双语模式和只显示译文模式都显示） -->
-          <div v-if="config.selectionTranslatorMode === 'bilingual' || config.selectionTranslatorMode === 'translation-only'" class="fr-translation-result fr-no-select">
+          <div
+            v-if="
+              config.selectionTranslatorMode === 'bilingual' ||
+              config.selectionTranslatorMode === 'translation-only'
+            "
+            class="fr-translation-result fr-no-select"
+          >
             <pre>{{ translationResult }}</pre>
-            <button class="fr-text-audio-btn" @click="(e) => toggleAudio(translationResult, e)" title="播放/停止译文">
-              <svg v-if="isPlaying && currentPlayingText === translationResult" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <button
+              class="fr-text-audio-btn"
+              @click="(e) => toggleAudio(translationResult, e)"
+              title="播放/停止译文"
+            >
+              <svg
+                v-if="isPlaying && currentPlayingText === translationResult"
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
                 <rect x="6" y="4" width="4" height="16"></rect>
                 <rect x="14" y="4" width="4" height="16"></rect>
               </svg>
-              <svg v-else xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg
+                v-else
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
                 <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
                 <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
               </svg>
             </button>
           </div>
-          
+
           <!-- 播放状态提示 - 显示在弹窗内部 -->
           <div v-if="isPlaying" class="fr-playing-status">
             <div class="fr-playing-status-icon">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
                 <path d="M3 18v-6a9 9 0 0 1 18 0v6"></path>
-                <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path>
+                <path
+                  d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"
+                ></path>
               </svg>
             </div>
             <span>正在播放: {{ currentPlayingText === selectedText ? '原文' : '译文' }}</span>
             <button class="fr-stop-audio-btn" @click="(e) => stopAudio(e)">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
                 <rect x="6" y="4" width="4" height="16"></rect>
                 <rect x="14" y="4" width="4" height="16"></rect>
               </svg>
@@ -79,11 +178,21 @@
         </div>
       </div>
     </div>
-    
+
     <!-- 复制成功提示 -->
     <div v-if="copySuccess" class="fr-copy-success-toast" :class="{ 'fr-dark-theme': isDarkTheme }">
       <div class="fr-copy-success-icon">
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <polyline points="20 6 9 17 4 12"></polyline>
         </svg>
       </div>
@@ -121,29 +230,29 @@ const isDarkTheme = ref(false); // 主题状态
 // 计算小红点指示器的样式
 const indicatorStyle = computed(() => {
   if (!selectionRect.value) return {};
-  
+
   return {
     left: `${selectionRect.value.right}px`,
     top: `${selectionRect.value.top}px`,
-    transform: 'translate(3px, -50%)'
+    transform: 'translate(3px, -50%)',
   };
 });
 
 // 计算弹窗的样式
 const tooltipStyle = computed(() => {
   if (!selectionRect.value) return {};
-  
+
   // 确保弹窗不会超出视口
   const left = Math.min(
     selectionRect.value.right + 15,
-    window.innerWidth - 350 // 稍微增加宽度，适应换行文本
+    window.innerWidth - 350, // 稍微增加宽度，适应换行文本
   );
-  
+
   return {
     left: `${left}px`,
     top: `${selectionRect.value.top}px`,
     maxWidth: '350px', // 增加宽度以适应更多内容
-    maxHeight: '400px' // 增加最大高度以支持更多内容
+    maxHeight: '400px', // 增加最大高度以支持更多内容
   };
 });
 
@@ -162,21 +271,21 @@ const debounce = (fn: Function, delay: number) => {
 const handleTextSelection = () => {
   // 如果用户正在选择中，不立即处理
   if (isSelecting.value) return;
-  
+
   debounce(() => {
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) {
       hideIndicator();
       return;
     }
-    
+
     const selectedTextContent = selection.toString().trim();
-    
+
     // 如果选中的文本为空，则不处理
     if (!selectedTextContent) {
       return;
     }
-    
+
     // 如果选中的文本与上次相同，重新显示指示器（避免因为相同文本而不显示的问题）
     if (selectedTextContent === lastSelectedText.value) {
       // 重新显示指示器，但不重新获取翻译
@@ -186,24 +295,24 @@ const handleTextSelection = () => {
       showIndicator.value = true;
       return;
     }
-    
+
     // 忽略过短的选择（避免意外触发）
     if (selectedTextContent.length < 2) {
       hideIndicator();
       return;
     }
-    
+
     // 忽略过长的选择（避免处理大段文本导致性能问题）
     const maxTextLength = 4096; // 设置最大字符数限制
     if (selectedTextContent.length > maxTextLength) {
       hideIndicator();
       return;
     }
-    
+
     // 获取选中文本位置信息
     const range = selection.getRangeAt(0);
     const rect = range.getBoundingClientRect();
-    
+
     // 保存选中文本和位置
     selectedText.value = selectedTextContent;
     lastSelectedText.value = selectedTextContent;
@@ -235,10 +344,10 @@ const handleMouseEnterTooltip = () => {
 // 鼠标离开弹窗
 const handleMouseLeaveTooltip = () => {
   isHoveringTooltip.value = false;
-  
+
   // 如果当前正在播放音频，不自动隐藏弹窗
   if (isPlaying.value) return;
-  
+
   setHideTooltipTimer();
 };
 
@@ -248,7 +357,7 @@ const setHideTooltipTimer = () => {
   hideTooltipTimer.value = window.setTimeout(() => {
     // 如果当前正在播放音频，不隐藏弹窗
     if (isPlaying.value) return;
-    
+
     showTooltip.value = false;
   }, 250); // 250毫秒后隐藏
 };
@@ -277,10 +386,10 @@ const closeTooltip = () => {
 // 获取翻译结果
 const getTranslation = async () => {
   if (!selectedText.value) return;
-  
+
   isLoading.value = true;
   error.value = '';
-  
+
   try {
     // 使用当前配置的翻译服务进行翻译
     const result = await translateText(selectedText.value);
@@ -296,9 +405,10 @@ const getTranslation = async () => {
 // 复制翻译文本
 const copyTranslation = () => {
   if (!translationResult.value) return;
-  
+
   // 使用navigator.clipboard API复制文本
-  navigator.clipboard.writeText(translationResult.value)
+  navigator.clipboard
+    .writeText(translationResult.value)
     .then(() => {
       // 显示复制成功消息
       copySuccess.value = true;
@@ -307,7 +417,7 @@ const copyTranslation = () => {
         copySuccess.value = false;
       }, 1500);
     })
-    .catch(err => {
+    .catch((err) => {
       console.error('复制失败:', err);
     });
 };
@@ -325,7 +435,7 @@ const toggleAudio = (text: string, e?: Event) => {
     event.stopPropagation();
     event.preventDefault();
   }
-  
+
   // 确保弹窗不会消失
   clearHideTooltipTimer();
   isHoveringTooltip.value = true;
@@ -335,62 +445,62 @@ const toggleAudio = (text: string, e?: Event) => {
     stopAudio(e);
     return;
   }
-  
+
   // 如果正在播放其他文本，先停止
   if (isPlaying.value) {
     stopAudio(e);
   }
-  
+
   // 检测语言
   const language = detectLanguage(text);
-  
+
   // 创建语音合成URL
   const speechUrl = createSpeechUrl(text, language);
-  
+
   // 创建音频元素前先设置状态，解决Firefox中状态更新不及时的问题
   isPlaying.value = true;
   currentPlayingText.value = text;
-  
+
   // 创建音频元素
   const audio = new Audio(speechUrl);
   audioElement.value = audio;
-  
+
   // 监听播放开始事件
   audio.onplay = () => {
     // 确保状态已更新
     isPlaying.value = true;
     currentPlayingText.value = text;
   };
-  
+
   // 监听播放结束事件
   audio.onended = () => {
     isPlaying.value = false;
     audioElement.value = null;
     currentPlayingText.value = '';
   };
-  
+
   // 监听错误事件
   audio.onerror = (e) => {
     console.error('音频播放失败:', e);
     isPlaying.value = false;
     audioElement.value = null;
     currentPlayingText.value = '';
-    
+
     // 不要尝试使用Web Speech API作为备选，避免重复播放
     // tryWebSpeechAPI(text, language);
   };
-  
+
   // 开始播放
   const playPromise = audio.play();
-  
+
   // 处理播放Promise
   if (playPromise !== undefined) {
-    playPromise.catch(err => {
+    playPromise.catch((err) => {
       console.error('音频播放出错:', err);
       isPlaying.value = false;
       audioElement.value = null;
       currentPlayingText.value = '';
-      
+
       // 尝试使用Web Speech API作为备选，只在Google TTS失败时使用
       tryWebSpeechAPI(text, language);
     });
@@ -407,17 +517,17 @@ const stopAudio = (e?: Event) => {
     event.stopPropagation();
     event.preventDefault();
   }
-  
+
   if (audioElement.value) {
     audioElement.value.pause();
     audioElement.value = null;
   }
-  
+
   // 停止Web Speech API
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }
-  
+
   isPlaying.value = false;
   currentPlayingText.value = '';
 };
@@ -431,31 +541,31 @@ const detectLanguage = (text: string): string => {
   // 检测是否包含中文字符
   const hasChinese = /[\u4e00-\u9fa5]/.test(text);
   if (hasChinese) return 'zh-CN';
-  
+
   // 检测是否包含日文字符
   const hasJapanese = /[\u3040-\u30ff]/.test(text);
   if (hasJapanese) return 'ja-JP';
-  
+
   // 检测是否包含韩文字符
   const hasKorean = /[\uAC00-\uD7A3]/.test(text);
   if (hasKorean) return 'ko-KR';
-  
+
   // 检测是否包含俄文字符
   const hasRussian = /[\u0400-\u04FF]/.test(text);
   if (hasRussian) return 'ru-RU';
-  
+
   // 检测是否包含德文特殊字符
   const hasGerman = /[äöüßÄÖÜ]/.test(text);
   if (hasGerman) return 'de-DE';
-  
+
   // 检测是否包含法文特殊字符
   const hasFrench = /[àâçéèêëîïôùûüÿæœÀÂÇÉÈÊËÎÏÔÙÛÜŸÆŒ]/.test(text);
   if (hasFrench) return 'fr-FR';
-  
+
   // 检测是否包含西班牙文特殊字符
   const hasSpanish = /[áéíóúüñÁÉÍÓÚÜÑ]/.test(text);
   if (hasSpanish) return 'es-ES';
-  
+
   // 默认返回英语
   return 'en-US';
 };
@@ -471,35 +581,35 @@ const createSpeechUrl = (text: string, language: string): string => {
 const tryWebSpeechAPI = (text: string, language: string) => {
   // 如果已经在播放，不要重复播放
   if (isPlaying.value) return;
-  
+
   // 检查浏览器是否支持Web Speech API
   if ('speechSynthesis' in window) {
     // 停止任何可能正在播放的内容
     window.speechSynthesis.cancel();
-    
+
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = language;
-    
+
     // 设置状态
     isPlaying.value = true;
     currentPlayingText.value = text;
-    
+
     utterance.onstart = () => {
       // 确保状态已更新
       isPlaying.value = true;
       currentPlayingText.value = text;
     };
-    
+
     utterance.onend = () => {
       isPlaying.value = false;
       currentPlayingText.value = '';
     };
-    
+
     utterance.onerror = () => {
       isPlaying.value = false;
       currentPlayingText.value = '';
     };
-    
+
     window.speechSynthesis.speak(utterance);
   } else {
     console.error('此浏览器不支持语音合成');
@@ -530,13 +640,13 @@ const updateTheme = () => {
 onMounted(() => {
   // 检测浏览器类型
   isFirefox.value = detectFirefox();
-  
+
   // 初始化主题状态
   updateTheme();
-  
+
   // 监听主题变化
   watch(() => config.theme, updateTheme, { immediate: true });
-  
+
   // 监听系统主题变化（用于自动模式）
   const darkModeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
   const handleSystemThemeChange = () => {
@@ -545,26 +655,26 @@ onMounted(() => {
     }
   };
   darkModeMediaQuery.addEventListener('change', handleSystemThemeChange);
-  
+
   // 保存系统主题监听器引用供清理使用
   systemThemeHandler = handleSystemThemeChange;
-  
+
   // 定义事件监听器函数
   mouseDownHandler = () => {
     isSelecting.value = true;
   };
-  
+
   mouseUpHandler = () => {
     isSelecting.value = false;
     handleTextSelection();
   };
-  
+
   // 鼠标按下时，标记开始选择
   document.addEventListener('mousedown', mouseDownHandler);
-  
+
   // 鼠标抬起时，标记选择结束，并处理选中文本
   document.addEventListener('mouseup', mouseUpHandler);
-  
+
   // 添加selectionchange事件作为备用机制（使用节流限制频率）
   let lastSelectionChangeTime = 0;
   selectionChangeHandler = () => {
@@ -580,15 +690,15 @@ onMounted(() => {
       }, 100);
     }
   };
-  
+
   document.addEventListener('selectionchange', selectionChangeHandler);
-  
+
   // 更新clickHandler定义，添加selectionchange的清理
   const originalClickHandler = clickHandler;
   clickHandler = (e: Event) => {
     originalClickHandler(e);
   };
-  
+
   // 监听翻译显示状态的变化
   watch(showTooltip, async (newValue: boolean) => {
     if (newValue) {
@@ -599,28 +709,29 @@ onMounted(() => {
       stopAudio();
     }
   });
-  
+
   // 定义点击事件处理函数
   clickHandler = (e: Event) => {
     // 检查点击事件是否发生在指示器或弹窗之外
     const target = e.target as HTMLElement;
     const isOutsideIndicator = !target.closest('.fr-selection-indicator');
     const isOutsideTooltip = !target.closest('.fr-translation-tooltip');
-    
+
     // 检查点击事件是否发生在音频按钮上
-    const isAudioButton = target.closest('.fr-text-audio-btn') || target.closest('.fr-stop-audio-btn');
-    
+    const isAudioButton =
+      target.closest('.fr-text-audio-btn') || target.closest('.fr-stop-audio-btn');
+
     // 如果点击在音频按钮上，不要隐藏弹窗
     if (isAudioButton) {
       return;
     }
-    
+
     if (isOutsideIndicator && isOutsideTooltip && showIndicator.value) {
       hideIndicator();
       closeTooltip();
     }
   };
-  
+
   // 添加点击页面其他区域时隐藏指示器和弹窗
   document.addEventListener('click', clickHandler);
 });
@@ -647,26 +758,26 @@ onBeforeUnmount(() => {
   if (selectionChangeHandler) {
     document.removeEventListener('selectionchange', selectionChangeHandler);
   }
-  
+
   // 移除系统主题监听器
   if (systemThemeHandler) {
     const darkModeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     darkModeMediaQuery.removeEventListener('change', systemThemeHandler);
   }
-  
+
   // 清理所有定时器
   clearHideTooltipTimer();
   if (debounceTimer.value) {
     clearTimeout(debounceTimer.value);
     debounceTimer.value = null;
   }
-  
+
   // 停止所有音频播放
   if (audioElement.value) {
     audioElement.value.pause();
     audioElement.value = null;
   }
-  
+
   // 停止Web Speech API
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
@@ -711,7 +822,15 @@ onBeforeUnmount(() => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    sans-serif;
   width: 350px; /* 增加宽度 */
   transition: opacity 0.2s ease;
 }
@@ -734,7 +853,8 @@ onBeforeUnmount(() => {
   gap: 6px;
 }
 
-.fr-action-btn, .fr-copy-btn {
+.fr-action-btn,
+.fr-copy-btn {
   background: none;
   border: none;
   cursor: pointer;
@@ -744,10 +864,13 @@ onBeforeUnmount(() => {
   justify-content: center;
   padding: 4px;
   border-radius: 4px;
-  transition: background-color 0.2s, color 0.2s;
+  transition:
+    background-color 0.2s,
+    color 0.2s;
 }
 
-.fr-action-btn:hover, .fr-copy-btn:hover {
+.fr-action-btn:hover,
+.fr-copy-btn:hover {
   background-color: rgba(0, 0, 0, 0.05);
   color: #333;
 }
@@ -838,14 +961,23 @@ onBeforeUnmount(() => {
   left: 2px;
   right: 2px;
   bottom: 2px;
-  background: linear-gradient(135deg, rgba(255,255,255,0.4) 0%, transparent 50%, rgba(0,0,0,0.1) 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.4) 0%,
+    transparent 50%,
+    rgba(0, 0, 0, 0.1) 100%
+  );
   border-radius: 50%;
   pointer-events: none;
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .fr-error-message {
@@ -868,7 +1000,9 @@ onBeforeUnmount(() => {
   cursor: pointer;
   color: #999;
   opacity: 0;
-  transition: opacity 0.2s, color 0.2s;
+  transition:
+    opacity 0.2s,
+    color 0.2s;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -968,18 +1102,20 @@ onBeforeUnmount(() => {
   color: white;
 }
 
-.fr-translation-result, .fr-original-text {
+.fr-translation-result,
+.fr-original-text {
   padding: 8px;
   border-radius: 4px;
   background: transparent;
   transition: background-color 0.15s ease;
 }
 
-.fr-translation-result:hover, .fr-original-text:hover {
+.fr-translation-result:hover,
+.fr-original-text:hover {
   background-color: rgba(0, 0, 0, 0.03);
 }
 
-.fr-translation-tooltip.fr-dark-theme .fr-translation-result:hover, 
+.fr-translation-tooltip.fr-dark-theme .fr-translation-result:hover,
 .fr-translation-tooltip.fr-dark-theme .fr-original-text:hover {
   background-color: rgba(255, 255, 255, 0.05);
 }
@@ -1028,7 +1164,7 @@ onBeforeUnmount(() => {
   .fr-playing-status {
     animation-name: moz-pulse-light;
   }
-  
+
   @keyframes moz-pulse-light {
     0% {
       background-color: rgba(24, 144, 255, 0.05);
@@ -1098,10 +1234,22 @@ onBeforeUnmount(() => {
 }
 
 @keyframes toast-fade {
-  0% { opacity: 0; transform: translate(-50%, -40%); }
-  20% { opacity: 1; transform: translate(-50%, -50%); }
-  80% { opacity: 1; transform: translate(-50%, -50%); }
-  100% { opacity: 0; transform: translate(-50%, -60%); }
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -40%);
+  }
+  20% {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+  80% {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -60%);
+  }
 }
 
 .fr-copy-success-toast.fr-dark-theme {
@@ -1128,4 +1276,4 @@ onBeforeUnmount(() => {
   color: #69c0ff;
   background-color: rgba(24, 144, 255, 0.15);
 }
-</style> 
+</style>
