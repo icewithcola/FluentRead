@@ -2,6 +2,12 @@
 // The summary is used as context injected into translation prompts (not shown to users).
 import { config } from '@/entrypoints/utils/config';
 import { summaryMsgTemplate } from '@/entrypoints/utils/template';
+import {
+  getPageStorageItem,
+  getPageStorageKeys,
+  removePageStorageItem,
+  setPageStorageItem,
+} from '@/entrypoints/utils/pageStorage';
 import browser from 'webextension-polyfill';
 
 const SUMMARY_CACHE_PREFIX = 'fr_summary_';
@@ -249,12 +255,12 @@ function getSummaryCacheKey(): string {
 
 export function getCachedSummary(): string | null {
   if (!config.useCache) return null;
-  return localStorage.getItem(getSummaryCacheKey());
+  return getPageStorageItem(getSummaryCacheKey());
 }
 
 export function setCachedSummary(summary: string): void {
   if (!config.useCache) return;
-  localStorage.setItem(getSummaryCacheKey(), summary);
+  setPageStorageItem(getSummaryCacheKey(), summary);
 }
 
 /**
@@ -263,13 +269,12 @@ export function setCachedSummary(summary: string): void {
  */
 export function cleanSummaryCache(): void {
   const keysToDelete: string[] = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
+  for (const key of getPageStorageKeys()) {
     if (key && key.startsWith(SUMMARY_CACHE_PREFIX)) {
       keysToDelete.push(key);
     }
   }
-  keysToDelete.forEach((key) => localStorage.removeItem(key));
+  keysToDelete.forEach((key) => removePageStorageItem(key));
 }
 
 // --- Summary request ---

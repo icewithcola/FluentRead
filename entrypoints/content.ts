@@ -17,6 +17,16 @@ import { cancelAllTranslations, translateText } from '@/entrypoints/utils/transl
 import { createApp } from 'vue';
 import TranslationStatus from '@/components/TranslationStatus.vue';
 
+/**
+ * Keyboard events normally expose `key` and `code` as strings, but pages can
+ * dispatch synthetic events without either property. Treat those events as
+ * unrecognised instead of allowing a hotkey listener to crash the content
+ * script.
+ */
+function normalizeKeyboardEventValue(value: unknown): string {
+  return typeof value === 'string' ? value.toLowerCase() : '';
+}
+
 export default defineContentScript({
   matches: ['<all_urls>'], // 匹配所有页面
   runAt: 'document_end', // 在页面加载完成后运行
@@ -161,7 +171,7 @@ function setupManualTranslationTriggers() {
     // 如果选择了自定义快捷键，使用自定义的
     const hotkeyString = config.hotkey === 'custom' ? config.customHotkey : config.hotkey;
 
-    if (!hotkeyString || hotkeyString === 'none') {
+    if (typeof hotkeyString !== 'string' || !hotkeyString || hotkeyString === 'none') {
       return [];
     }
 
@@ -221,8 +231,8 @@ function setupManualTranslationTriggers() {
     if (event.shiftKey) mouseHotkeysPressed.add('shift');
 
     // 处理普通按键
-    const key = event.key.toLowerCase();
-    const code = event.code?.toLowerCase();
+    const key = normalizeKeyboardEventValue(event.key);
+    const code = normalizeKeyboardEventValue(event.code);
 
     // 处理字母键
     if (code && code.startsWith('key')) {
@@ -270,8 +280,8 @@ function setupManualTranslationTriggers() {
   // 3. 抬起按键时
   window.addEventListener('keyup', (event) => {
     // 清除字母键状态（在检查前先清除）
-    const releasedKey = event.key.toLowerCase();
-    const releasedCode = event.code?.toLowerCase();
+    const releasedKey = normalizeKeyboardEventValue(event.key);
+    const releasedCode = normalizeKeyboardEventValue(event.code);
     if (releasedCode && releasedCode.startsWith('key')) {
       const letter = releasedCode.slice(3).toLowerCase();
       mouseHotkeysPressed.delete(letter);
@@ -475,7 +485,7 @@ function setupFloatingBallHotkey() {
         ? config.customFloatingBallHotkey
         : config.floatingBallHotkey;
 
-    if (!hotkeyString || hotkeyString === 'none') {
+    if (typeof hotkeyString !== 'string' || !hotkeyString || hotkeyString === 'none') {
       return [];
     }
 
@@ -513,8 +523,8 @@ function setupFloatingBallHotkey() {
     if (event.shiftKey) hotkeysPressed.add('shift');
 
     // 处理普通按键
-    const key = event.key.toLowerCase();
-    const code = event.code?.toLowerCase();
+    const key = normalizeKeyboardEventValue(event.key);
+    const code = normalizeKeyboardEventValue(event.code);
 
     // 处理字母键
     if (code && code.startsWith('key')) {
@@ -589,8 +599,8 @@ function setupFloatingBallHotkey() {
   // 监听按键释放事件
   document.addEventListener('keyup', (event) => {
     // 清除字母键状态
-    const releasedKey = event.key.toLowerCase();
-    const releasedCode = event.code?.toLowerCase();
+    const releasedKey = normalizeKeyboardEventValue(event.key);
+    const releasedCode = normalizeKeyboardEventValue(event.code);
     if (releasedCode && releasedCode.startsWith('key')) {
       const letter = releasedCode.slice(3).toLowerCase();
       hotkeysPressed.delete(letter);

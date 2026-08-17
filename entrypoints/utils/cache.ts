@@ -1,6 +1,12 @@
 import { customModelString } from './option';
 import { config } from '@/entrypoints/utils/config';
 import { cleanSummaryCache } from '@/entrypoints/utils/pageSummary';
+import {
+  getPageStorageItem,
+  getPageStorageKeys,
+  removePageStorageItem,
+  setPageStorageItem,
+} from '@/entrypoints/utils/pageStorage';
 
 const prefix = 'flcache_'; // fluent read cache
 
@@ -35,7 +41,7 @@ export const cache = {
     if (!key.trim() || !value.trim()) return;
     if (key.includes('[object Object]') || value.includes('[object Object]')) return;
 
-    localStorage.setItem(buildKey(key), value);
+    setPageStorageItem(buildKey(key), value);
   },
 
   localSetDual(key: string, value: string) {
@@ -50,26 +56,26 @@ export const cache = {
     // 如果禁用缓存，则始终返回 null
     if (!config.useCache) return null;
 
-    return localStorage.getItem(buildKey(origin));
+    return getPageStorageItem(buildKey(origin));
   },
 
   localRemove(origin: string) {
     const key = buildKey(origin);
-    const result = localStorage.getItem(key);
-    localStorage.removeItem(key);
+    const result = getPageStorageItem(key);
+    removePageStorageItem(key);
     if (result) {
-      localStorage.removeItem(buildKey(result));
+      removePageStorageItem(buildKey(result));
     }
   },
 
   // 24h 清理一次缓存（每次页面打开即 main.js 时都应该调用）
   cleaner() {
-    const lastSessionTimestamp = localStorage.getItem('flLastSessionTimestamp');
+    const lastSessionTimestamp = getPageStorageItem('flLastSessionTimestamp');
     const currentTime = Date.now();
 
     if (!lastSessionTimestamp || currentTime - parseInt(lastSessionTimestamp) > 24 * 3600000) {
       this.clean();
-      localStorage.setItem('flLastSessionTimestamp', currentTime.toString());
+      setPageStorageItem('flLastSessionTimestamp', currentTime.toString());
     }
   },
 
@@ -77,12 +83,11 @@ export const cache = {
   clean() {
     const keysToDelete = [];
     // 收集所有要删除的键
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
+    for (const key of getPageStorageKeys()) {
       if (key && key.startsWith(prefix)) keysToDelete.push(key);
     }
     // 批量删除
-    keysToDelete.forEach((key) => localStorage.removeItem(key));
+    keysToDelete.forEach((key) => removePageStorageItem(key));
     // Also clean page summary caches
     cleanSummaryCache();
   },
