@@ -500,7 +500,7 @@ function setupFloatingBallHotkey() {
 
   if (isDev) {
     console.log(
-      `[FluentRead] 设置悬浮球快捷键: ${config.floatingBallHotkey}, 系统: ${isMac ? 'macOS' : '其他'}`,
+      `[Catgirl Read] 设置悬浮球快捷键: ${config.floatingBallHotkey}, 系统: ${isMac ? 'macOS' : '其他'}`,
     );
   }
 
@@ -591,7 +591,7 @@ function setupFloatingBallHotkey() {
           config.floatingBallHotkey === 'custom'
             ? config.customFloatingBallHotkey
             : config.floatingBallHotkey;
-        console.log(`[FluentRead] 触发悬浮球翻译，快捷键: ${activeHotkey}`);
+        console.log(`[Catgirl Read] 触发悬浮球翻译，快捷键: ${activeHotkey}`);
       }
     }
   });

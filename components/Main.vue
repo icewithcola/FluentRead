@@ -25,7 +25,7 @@
       <div class="setting-item">
         <div class="setting-label">
           <el-icon><SwitchButton /></el-icon>
-          <span class="font-bold">启用 Fluent Read</span>
+          <span class="font-bold">启用喵喵阅读</span>
         </div>
         <div class="setting-control">
           <el-switch

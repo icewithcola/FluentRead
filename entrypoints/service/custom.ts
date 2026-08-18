@@ -14,13 +14,13 @@ async function custom(message: any) {
 
   if (config.debugMode) {
     console.log(
-      '[FluentRead Debug] custom() - translating:',
+      '[Catgirl Read Debug] custom() - translating:',
       message.origin?.slice(0, 100),
       '| pageSummary injected:',
       !!pageSummary,
     );
     if (pageSummary) {
-      console.log('[FluentRead Debug] custom() - pageSummary preview:', pageSummary.slice(0, 200));
+      console.log('[Catgirl Read Debug] custom() - pageSummary preview:', pageSummary.slice(0, 200));
     }
   }
 

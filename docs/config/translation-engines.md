@@ -1,6 +1,6 @@
 # 翻译引擎配置
 
-流畅阅读支持多种翻译引擎，包括传统机器翻译和大语言模型。本文将介绍各个翻译引擎的配置方法。
+喵喵阅读支持多种翻译引擎，包括传统机器翻译和大语言模型。本文将介绍各个翻译引擎的配置方法。
 
 ## 支持的翻译引擎
 
@@ -44,13 +44,13 @@
 <img src="/deepseek-apikey.png" alt="DeepSeek API Key" style="width: 80%; max-width: 100%;border: 1px solid #eee;border-radius: 4px;box-shadow: 0 1px 2px rgba(0,0,0,0.05);" />
 
 ### 2. 配置插件
-1. 点击浏览器工具栏中的流畅阅读图标
+1. 点击浏览器工具栏中的喵喵阅读图标
 2. 点击设置图标，进入设置页面
 3. 选择 "翻译引擎" 选项卡
 4. 在引擎列表中选择 "DeepSeek"
 5. 选择 `deepseek-chat` 模型，并填入配置信息
 
-<img src="/click-fluent_read.png" alt="点击流畅阅读图标" style="width: 80%; max-width: 100%;border: 1px solid #eee;border-radius: 4px;box-shadow: 0 1px 2px rgba(0,0,0,0.05);" />
+<img src="/click-fluent_read.png" alt="点击喵喵阅读图标" style="width: 80%; max-width: 100%;border: 1px solid #eee;border-radius: 4px;box-shadow: 0 1px 2px rgba(0,0,0,0.05);" />
 
 
 ### 4. 使用效果
@@ -73,7 +73,7 @@ The quantum computer performs operations on qubits, which can exist in multiple 
 
 
 #### 提示词配置
-大语言模型的翻译效果很大程度上取决于提示词（Prompt）的设置。流畅阅读提供了默认的提示词配置：
+大语言模型的翻译效果很大程度上取决于提示词（Prompt）的设置。喵喵阅读提供了默认的提示词配置：
 
 ##### 系统提示词（System Prompt）
 ```text

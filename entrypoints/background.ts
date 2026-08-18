@@ -17,7 +17,7 @@ export default defineBackground({
       // 创建父菜单
       browser.contextMenus.create({
         id: 'fluentread-parent',
-        title: 'FluentRead',
+        title: '喵喵阅读',
         contexts: ['page', 'selection'],
       });
 
@@ -169,10 +169,10 @@ export default defineBackground({
  */
 // Debug logging helper for background script, controlled by config.debugMode
 function bgDebugLog(...args: any[]): void {
-  if (config.debugMode) console.log('[FluentRead BG Debug]', ...args);
+  if (config.debugMode) console.log('[Catgirl Read BG Debug]', ...args);
 }
 function bgDebugError(...args: any[]): void {
-  if (config.debugMode) console.error('[FluentRead BG Debug]', ...args);
+  if (config.debugMode) console.error('[Catgirl Read BG Debug]', ...args);
 }
 
 /**

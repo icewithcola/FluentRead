@@ -229,7 +229,7 @@ onUnmounted(() => {
     background-color 0.3s ease;
 }
 
-/* 暗黑模式支持 - 使用 :root[class="dark"] 选择器匹配 FluentRead 的主题系统 */
+/* 暗黑模式支持 - 使用 :root[class="dark"] 选择器匹配 Catgirl Read 的主题系统 */
 :root[class='dark'] .translation-status-card {
   background-color: #2d3436;
   border-color: #4d4d4d;

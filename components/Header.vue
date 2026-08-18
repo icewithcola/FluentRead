@@ -1,9 +1,9 @@
 <template>
   <div class="header-container">
     <div class="logo-area">
-      <img src="/icon/512.png" alt="FluentRead catgirl translator icon" class="logo" />
+      <img src="/icon/512.png" alt="Catgirl Read translator icon" class="logo" />
       <div class="title-wrapper">
-        <h1 class="title">Fluent Read</h1>
+        <h1 class="title">Catgirl Read</h1>
         <span class="version">v{{ version }}</span>
       </div>
     </div>

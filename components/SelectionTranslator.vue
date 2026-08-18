@@ -19,7 +19,7 @@
       @mouseleave="handleMouseLeaveTooltip"
     >
       <div class="fr-tooltip-header">
-        <span>翻译结果<small>（via 流畅阅读）</small></span>
+        <span>翻译结果<small>（由喵喵阅读提供）</small></span>
         <div class="fr-tooltip-actions">
           <button class="fr-action-btn" @click="copyTranslation" title="复制译文">
             <svg

@@ -50,7 +50,7 @@ curl -X POST http://localhost:11434/v1/chat/completions \
 
 ### 正确的 Ollama 接口地址
 
-使用 Ollama 时，请确保在 FluentRead 插件设置中使用正确的接口地址：
+使用 Ollama 时，请确保在喵喵阅读插件设置中使用正确的接口地址：
 
 ```
 http://localhost:11434/v1/chat/completions
@@ -86,4 +86,4 @@ http://localhost:11434/v1/chat/completions
 2. 已正确配置跨域访问，并在日志中确认生效
 3. 接口地址完全正确，包括 `/v1/chat/completions` 路径
 4. 本地已安装了相应的模型（可通过 `ollama list` 查看已安装模型）
-::: 
+:::

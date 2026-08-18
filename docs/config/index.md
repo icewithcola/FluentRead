@@ -1,6 +1,6 @@
 # 基本配置
 
-本章节将介绍流畅阅读插件的基本配置选项。
+本章节将介绍喵喵阅读插件的基本配置选项。
 
 <img src="/basic-config.png" alt="基本设置" style="width: 40%; max-width: 100%;border: 1px solid #eee;border-radius: 4px;box-shadow: 0 1px 2px rgba(0,0,0,0.05);" />
 
@@ -19,7 +19,7 @@
 
 ## 译文样式
 
-流畅阅读提供了丰富的`双语翻译样式`选项：
+喵喵阅读提供了丰富的`双语翻译样式`选项：
 | 分类 | 样式名称 | 说明 |
 |------|---------|------|
 | 基础样式 | **朴素模式** | 最基本的显示方式 |
@@ -95,4 +95,4 @@
 ## 下一步
 
 - 查看[翻译引擎配置](../config/translation-engines.md)，选择合适的翻译引擎
-- 访问我们的 [GitHub 仓库](https://github.com/Bistutu/FluentRead)参与讨论 
+- 访问我们的 [GitHub 仓库](https://github.com/Bistutu/FluentRead)参与讨论

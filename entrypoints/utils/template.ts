@@ -72,7 +72,7 @@ export function summaryMsgTemplate(content: string) {
 
   if (config.debugMode) {
     console.log(
-      '[FluentRead Debug] summaryMsgTemplate - model:',
+      '[Catgirl Read Debug] summaryMsgTemplate - model:',
       model,
       '| target language:',
       config.to,
@@ -96,10 +96,10 @@ export function summaryMsgTemplate(content: string) {
   };
 
   if (config.debugMode) {
-    console.log('[FluentRead Debug] summaryMsgTemplate - model:', model, '| stream:', false);
-    console.log('[FluentRead Debug] summaryMsgTemplate - system prompt:', system);
+    console.log('[Catgirl Read Debug] summaryMsgTemplate - model:', model, '| stream:', false);
+    console.log('[Catgirl Read Debug] summaryMsgTemplate - system prompt:', system);
     console.log(
-      '[FluentRead Debug] summaryMsgTemplate - user prompt (first 300 chars):',
+      '[Catgirl Read Debug] summaryMsgTemplate - user prompt (first 300 chars):',
       user.slice(0, 300) + '...',
     );
   }

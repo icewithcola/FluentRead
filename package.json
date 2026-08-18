@@ -1,6 +1,6 @@
 {
-  "name": "流畅阅读",
-  "description": "一款革命性的浏览器开源翻译插件，让所有人都能够拥有母语般的阅读体验",
+  "name": "catgirl-read",
+  "description": "An AI-powered open-source browser translation extension for native-like bilingual reading.",
   "private": true,
   "version": "0.2.2",
   "type": "module",
