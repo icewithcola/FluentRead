@@ -9,7 +9,7 @@ export default defineConfig({
   base: '/',
   
   head: [
-    ['link', { rel: 'icon', href: '/FluentRead/logo.png' }]
+    ['link', { rel: 'icon', href: '/FluentRead/icon.png' }]
   ],
   
   vite: {
@@ -45,7 +45,7 @@ export default defineConfig({
   },
   
   themeConfig: {
-    logo: '/logo.png',
+    logo: '/icon.png',
     nav: [
       { text: '首页', link: '/' },
       { text: '文档指南', link: '/guide/' },
@@ -94,4 +94,4 @@ export default defineConfig({
     }
   },
   
-}) 
+})
