@@ -85,7 +85,7 @@ export default defineConfig({
     ],
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/Bistutu/FluentRead' }
+      { icon: 'github', link: 'https://github.com/icewithcola/FluentRead' }
     ],
 
     footer: {

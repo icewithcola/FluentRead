@@ -15,7 +15,7 @@ hero:
       link: /guide/index
     - theme: alt
       text: 在 GitHub 上查看
-      link: https://github.com/Bistutu/FluentRead
+      link: https://github.com/icewithcola/FluentRead
 
 features:
   - icon: 🤖

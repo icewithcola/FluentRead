@@ -1,4 +1,4 @@
-> [English](https://github.com/Bistutu/FluentRead/blob/main/misc/README_EN.md) | 中文
+> [English](https://github.com/icewithcola/FluentRead/blob/main/misc/README_EN.md) | 中文
 
 <p align="center">
   <img src="./public/icon/512.png" alt="喵喵阅读猫娘翻译助手图标" width="160">
@@ -14,26 +14,37 @@
 <p align="center">
   <a href="https://fluent.thinkstu.com/">阅读文档</a> ·
   <a href="https://fluent.thinkstu.com/guide/getting-started">安装扩展</a> ·
-  <a href="https://github.com/Bistutu/FluentRead">GitHub</a>
+  <a href="https://github.com/icewithcola/FluentRead">GitHub</a>
 </p>
 
-喵喵阅读（Catgirl Read）是一款开源的沉浸式浏览器翻译插件。它会安静地陪在网页一角，帮你把陌生语言变成自然、好懂的双语内容。
+喵喵阅读（Catgirl Read）是一款开源的浏览器翻译扩展。它可将网页或选中的文本翻译为双语对照或仅译文，帮助你更轻松地阅读外语内容。
 
 不论是论文、技术文档还是日常冲浪，都能读得像母语一样轻松自在。
 
 1. [官方文档（必看）](https://fluent.thinkstu.com/)
 2. [B站视频介绍](https://www.bilibili.com/video/BV1ux4y1e73x/)
-3. [deepwiki 架构介绍](https://deepwiki.com/Bistutu/FluentRead)
+3. [deepwiki 架构介绍](https://deepwiki.com/icewithcola/FluentRead)
 
-## ✨ 猫娘小技能
+## ✨ 现在能做什么
 
-- **聪明翻译**：支持 20+ 种翻译引擎，包括微软翻译、谷歌翻译、DeepL、OpenAI、DeepSeek、Kimi、Ollama 和自定义引擎等。
-- **双语贴贴**：原文与译文并列显示，查词、学习和对照阅读都更轻松。
-- **划词就翻**：选中任意文本即可查看即时译文，还能一键复制。
-- **全页一键喵化**：通过悬浮球翻译整个网页，无需刷新即可切换回原文。
-- **隐私守护**：数据保存在本地，代码开源透明，放心阅读。
-- **随心打扮**：丰富的样式与快捷键选项，调成最顺爪的阅读方式。
-- **免费陪伴**：完全开源、免费、非商业化。
+- **三种翻译方式**：内置 Google 翻译（双语模式）、Chrome 内置 Translation API，以及可配置的 OpenAI 兼容 Chat Completions 接口。自定义接口可设置 URL、API Key、模型和提示词，并支持 SSE 流式输出。
+- **整页翻译与还原**：使用悬浮球、快捷键或右键菜单翻译整页；无需刷新即可还原原始页面内容。
+- **双语或仅译文**：可保留原文并在其后显示译文，也可替换为仅译文；双语模式提供多种译文样式。
+- **划词翻译**：选中文本后，将鼠标移到出现的指示点即可查看翻译；支持双语/仅译文显示、复制译文，以及浏览器语音朗读原文或译文。
+- **阅读体验设置**：可设置目标语言、快捷键、悬浮球显示与位置、主题、动画、缓存、翻译并发数和进度面板；配置也可导入或导出。
+- **上下文增强**：使用自定义接口进行全文翻译时，可选先生成页面摘要并把它作为翻译上下文。
+- **本地配置，按需发送**：扩展设置和翻译缓存保存在浏览器本地。翻译文本会发送给你选择的翻译服务；请依据所选服务的隐私政策使用。
+
+> **服务范围说明**：本项目没有 Microsoft、DeepL、DeepSeek、Kimi、Ollama 等独立内置适配器。若服务提供 OpenAI 兼容的 Chat Completions 接口，可通过“自定义接口”接入。Chrome 内置 Translation API 仅适用于支持该 API 的 Chrome（代码当前要求 Chrome 138 或更高版本）；在其他浏览器中请使用 Google 翻译或自定义接口。
+
+## 🧭 翻译核心
+
+全文翻译使用一套按元素管理生命周期的 DOM/翻译核心：
+
+- DOM 扫描与翻译请求解耦，按最小可读内容单元选择节点，并自动跳过导航、隐藏内容和扩展自身 UI。
+- 每个节点都有独立的 pending、translating、translated、failed 状态；动态页面新增内容会被增量观察，不会重复扫描已处理内容。
+- 翻译请求支持并发限制、超时、重试和取消。停止翻译或还原页面后，迟到的普通响应和流式响应都不会再次写入页面。
+- 还原时保留页面元素身份和原始子节点，尽量保留网站绑定的事件监听器；译文 HTML 也会经过标签、属性和 URL 安全过滤。
 
 <p align="center"><em>原文和译文一起贴贴，阅读更轻松 ✨</em></p>
 <kbd><img src="./misc/sample-git-1.gif" alt="sample-git-1.gif" style="width: 80%; max-width: 100%;border: 1px solid black;"></kbd>
@@ -64,6 +75,9 @@ bun run dev
 # 生产构建
 bun run build
 
+# 类型检查
+bun run compile
+
 # Debug 构建（无混淆，带 sourcemap，方便调试）
 bun run build:debug
 
@@ -82,6 +96,6 @@ bun run zip
 - 使用教程
 - 常见问题
 
-## ⭐ 猫爪印成长记录
+## 🙏 致谢
 
-[![Star History Chart](https://api.star-history.com/svg?repos=Bistutu/FluentRead&type=Date)](https://star-history.com/#Bistutu/FluentRead&Date)
+喵喵阅读 fork 自 [FluentRead](https://github.com/Bistutu/FluentRead)。感谢 FluentRead 的作者与社区打下坚实基础，并持续推动开源翻译工具的发展。

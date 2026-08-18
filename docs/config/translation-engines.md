@@ -131,4 +131,4 @@ Maintain precise technical terms and professional standards.
 
 ## 下一步
 
-- 访问 [GitHub Issues](https://github.com/Bistutu/FluentRead/issues) 反馈问题 
+- 访问 [GitHub Issues](https://github.com/icewithcola/FluentRead/issues) 反馈问题

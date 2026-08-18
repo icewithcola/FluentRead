@@ -1,4 +1,4 @@
-> [中文](https://github.com/Bistutu/FluentRead/blob/main/README.md) | English
+> [中文](https://github.com/icewithcola/FluentRead/blob/main/README.md) | English
 
 <p align="center">
   <img src="../public/icon/512.png" alt="Catgirl Read translator icon" width="160">
@@ -14,26 +14,28 @@
 <p align="center">
   <a href="https://fluent.thinkstu.com/">Documentation</a> ·
   <a href="https://fluent.thinkstu.com/guide/getting-started">Get the extension</a> ·
-  <a href="https://github.com/Bistutu/FluentRead">GitHub</a>
+  <a href="https://github.com/icewithcola/FluentRead">GitHub</a>
 </p>
 
-Catgirl Read is an open-source, immersive browser translation extension that sits quietly by your side and turns unfamiliar text into natural bilingual reading.
+Catgirl Read is an open-source browser translation extension. It translates a web page or selected text into bilingual or translation-only output, making foreign-language reading easier.
 
 Whether you are reading papers, technical docs, or simply wandering the web, it helps every page feel a little more like home.
 
 1. [Official Documentation (Must Read)](https://fluent.thinkstu.com/)
 2. [Bilibili Video Introduction](https://www.bilibili.com/video/BV1ux4y1e73x/)
-3. [Deepwiki Architecture Introduction](https://deepwiki.com/Bistutu/FluentRead)
+3. [Deepwiki Architecture Introduction](https://deepwiki.com/icewithcola/FluentRead)
 
-## ✨ Little catgirl superpowers
+## ✨ What it can do today
 
-- **Smart translations**: Choose from 20+ engines, including Microsoft Translator, Google Translate, DeepL, OpenAI, DeepSeek, Kimi, Ollama, and custom providers.
-- **Bilingual snuggles**: Keep the original and translation side by side for comfortable reading and learning.
-- **Select and pounce**: Highlight any text for an instant translation, then copy it in one click.
-- **One-page zoomies**: Translate an entire page from the floating button and switch back without refreshing.
-- **Privacy guardian**: Your data stays local; the code is open and transparent.
-- **Make it yours**: Tweak styles and shortcuts until the reading experience feels just right.
-- **Always free**: Open source, free to use, and non-commercial.
+- **Three translation routes**: Built-in Google Translate (bilingual mode), Chrome's built-in Translation API, and a configurable OpenAI-compatible Chat Completions endpoint. The custom route supports a URL, API key, model, prompt templates, and SSE streaming.
+- **Translate and restore whole pages**: Use the floating button, a shortcut, or the context menu to translate a page, then restore its original content without reloading.
+- **Bilingual or translation-only output**: Keep the source text with its translation or replace it with the translation; bilingual mode includes several display styles.
+- **Selection translation**: Select text and hover the indicator that appears to open its translation. It supports bilingual/translation-only display, copying the translation, and browser text-to-speech for either text.
+- **Reading controls**: Configure the target language, shortcuts, floating button visibility and position, theme, animations, cache, translation concurrency, and progress panel. Settings can also be exported and imported.
+- **Context enhancement**: When translating a full page with the custom endpoint, you can optionally generate a page summary and include it as translation context.
+- **Local settings, provider-bound requests**: Extension settings and translation cache stay in the browser. Text to translate is sent to the translation service you choose, so use it in accordance with that provider's privacy policy.
+
+> **Service scope:** This project does not ship separate built-in adapters for Microsoft, DeepL, DeepSeek, Kimi, Ollama, or other providers. A provider with an OpenAI-compatible Chat Completions endpoint can be connected through **Custom endpoint**. Chrome's built-in Translation API is available only in Chrome versions that support it (the current code requires Chrome 138 or later); use Google Translate or a custom endpoint in other browsers.
 
 <p align="center"><em>Original and translation, curled up together ✨</em></p>
 <kbd><img src="../misc/sample-git-1.gif" alt="sample-git-1.gif" style="width: 80%; max-width: 100%;border: 1px solid black;"></kbd>
@@ -57,6 +59,6 @@ Want to get to know Catgirl Read better? Visit the [documentation](https://fluen
 - User Tutorial
 - FAQ
 
-## ⭐ Paw-print history
+## 🙏 Thanks to FluentRead
 
-[![Star History Chart](https://api.star-history.com/svg?repos=Bistutu/FluentRead&type=Date)](https://star-history.com/#Bistutu/FluentRead&Date)
+Catgirl Read is forked from [FluentRead](https://github.com/Bistutu/FluentRead). Many thanks to its authors and community for the strong foundation and their continued work on open-source translation tools.

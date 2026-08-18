@@ -72,4 +72,4 @@
 ## 下一步
 
 - 查看[基本配置](../config/)和[翻译引擎配置](../config/translation-engines.md)了解更多配置选项
-- 访问我们的 [GitHub 仓库](https://github.com/Bistutu/FluentRead)参与讨论 
+- 访问我们的 [GitHub 仓库](https://github.com/icewithcola/FluentRead)参与讨论

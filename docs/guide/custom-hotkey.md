@@ -116,4 +116,4 @@ A: 系统检测到可能的冲突时会给出警告，您可以：
 
 ---
 
-如果您在使用过程中遇到任何问题，请访问 [GitHub Issues](https://github.com/Bistutu/FluentRead/issues) 反馈。
+如果您在使用过程中遇到任何问题，请访问 [GitHub Issues](https://github.com/icewithcola/FluentRead/issues) 反馈。
