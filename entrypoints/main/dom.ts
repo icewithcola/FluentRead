@@ -29,15 +29,26 @@ export const directSet = new Set([
 export const skipSet = new Set([
   'html',
   'body',
+  'head',
+  'title',
+  'base',
+  'meta',
+  'link',
   'script',
   'style',
   'noscript',
   'iframe',
+  'object',
+  'embed',
+  'template',
   'input',
   'textarea',
   'select',
+  'button',
   'code',
   'pre',
+  'kbd',
+  'samp',
   'figcaption',
   'nav',
   'aside',
@@ -47,6 +58,13 @@ export const skipSet = new Set([
   'video',
   'canvas',
   'svg',
+  'math',
+  'picture',
+  'source',
+  'track',
+  'map',
+  'area',
+  'portal',
 ]);
 
 /** Inline markup which can safely remain inside a translation unit. */
@@ -289,6 +307,40 @@ function hasMeaningfulText(text: string | null | undefined): boolean {
   return !!text && stripWhitespace(text).length > 0;
 }
 
+function hasSkippedAncestor(element: Element): boolean {
+  let current = element.parentElement;
+  while (current) {
+    const tag = current.tagName.toLowerCase();
+    // html/body are scan wrappers, not skipped content boundaries.
+    if (skipSet.has(tag) && tag !== 'html' && tag !== 'body') return true;
+    current = current.parentElement;
+  }
+  return false;
+}
+
+/** Text that remains after removing non-content subtrees from a translation unit. */
+export function getTranslatableText(element: Element): string {
+  if (hasSkippedAncestor(element)) return '';
+  const parts: string[] = [];
+  const visit = (node: Node): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (node.nodeValue) parts.push(node.nodeValue);
+      return;
+    }
+    if (!(node instanceof Element)) return;
+    if (
+      skipSet.has(node.tagName.toLowerCase()) ||
+      isOwnedElement(node) ||
+      !isVisible(node)
+    ) {
+      return;
+    }
+    node.childNodes.forEach(visit);
+  };
+  visit(element);
+  return parts.join(' ');
+}
+
 function isOwnedElement(element: Element): boolean {
   return (
     element.hasAttribute(OWNED_ATTR) ||
@@ -324,6 +376,8 @@ function isVisible(element: Element): boolean {
       current.hasAttribute('hidden') ||
       current.classList.contains('sr-only') ||
       current.classList.contains('notranslate') ||
+      current.getAttribute('translate')?.toLowerCase() === 'no' ||
+      current.hasAttribute('data-no-translate') ||
       current.getAttribute('aria-hidden') === 'true'
     ) {
       return false;
@@ -364,17 +418,17 @@ function hasInlineContent(element: Element): boolean {
 }
 
 function hasTranslatableText(element: Element): boolean {
-  return !isOwnedElement(element) && hasMeaningfulText(element.textContent);
+  return !isOwnedElement(element) && shouldTranslateContent(getTranslatableText(element));
 }
 
 function isOversized(element: Element): boolean {
-  const text = element.textContent || '';
+  const text = getTranslatableText(element);
   const meaningfulLength = countMeaningfulChars(stripWhitespace(text));
   return text.length > 3072 || element.outerHTML.length > 4096 || meaningfulLength === 0;
 }
 
 function isMainlyNumericContent(element: Element): boolean {
-  const text = stripWhitespace(element.textContent || '');
+  const text = stripWhitespace(getTranslatableText(element));
   if (!text) return false;
   if (text.length < 30 && isNumericContent(text)) return true;
 
@@ -399,6 +453,7 @@ function isSafeElement(element: Element): boolean {
   const tag = element.tagName.toLowerCase();
   return (
     !skipSet.has(tag) &&
+    !hasSkippedAncestor(element) &&
     !isInsideExcludedTree(element) &&
     !element.hasAttribute(TRANSLATED_ATTR) &&
     !element.hasAttribute(TRANSLATION_ID_ATTR) &&
@@ -415,7 +470,7 @@ export function isTranslationCandidate(element: Element): boolean {
   if (!isSafeElement(element)) return false;
 
   const tag = element.tagName.toLowerCase();
-  if (tag === 'button' || directSet.has(tag)) return true;
+  if (directSet.has(tag)) return true;
 
   if (containerSet.has(tag)) {
     // Containers containing a nested block are traversed so the smallest
@@ -547,13 +602,191 @@ function countMeaningfulChars(text: string): number {
   return matches ? matches.length : 0;
 }
 
+const LETTER_RE = /[\p{L}]/u;
+const LETTERS_RE = /[\p{L}\p{M}]/gu;
+const UNSPACED_SCRIPT_RE =
+  /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af\u0e00-\u0e7f]/gu;
+
+interface TextSegment {
+  segment: string;
+  isWordLike?: boolean;
+}
+
+interface TextSegmenter {
+  segment(text: string): Iterable<TextSegment>;
+}
+
+type SegmenterConstructor = new (
+  locales?: string | string[],
+  options?: { granularity: 'word' | 'sentence' },
+) => TextSegmenter;
+
+function createTextSegmenter(granularity: 'word' | 'sentence'): TextSegmenter | null {
+  if (typeof Intl === 'undefined') return null;
+  const segmenter = (Intl as typeof Intl & { Segmenter?: SegmenterConstructor }).Segmenter;
+  if (!segmenter) return null;
+  try {
+    return new segmenter(undefined, { granularity });
+  } catch {
+    return null;
+  }
+}
+
+function splitContentSentences(text: string): string[] {
+  const segmenter = createTextSegmenter('sentence');
+  if (segmenter) return Array.from(segmenter.segment(text), ({ segment }) => segment);
+  return text.split(/[.!?。！？;；\n\r]+/u);
+}
+
+function countMeaningfulWords(text: string): number {
+  const segmenter = createTextSegmenter('word');
+  if (segmenter) {
+    let count = 0;
+    for (const part of segmenter.segment(text)) {
+      if (part.isWordLike !== false && LETTER_RE.test(part.segment)) count++;
+    }
+    return count;
+  }
+
+  // Older browsers do not expose Intl.Segmenter. Count unspaced CJK,
+  // Japanese, Korean, and Thai characters separately instead of collapsing
+  // the entire sentence into one whitespace-delimited token.
+  const scriptCharacters = text.match(UNSPACED_SCRIPT_RE)?.length ?? 0;
+  const remaining = text.replace(UNSPACED_SCRIPT_RE, ' ');
+  const ordinaryWords = remaining.match(/[\p{L}\p{M}]+/gu)?.length ?? 0;
+  return scriptCharacters + ordinaryWords;
+}
+
+function hasAtLeastThreeWordsPerSentence(text: string): boolean {
+  const sentences = splitContentSentences(text)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  return sentences.length > 0 && sentences.every((sentence) => countMeaningfulWords(sentence) >= 3);
+}
+
+/**
+ * Detect source-like values which can appear in ordinary elements (for
+ * example a release hash rendered in a badge). Code/pre are excluded by the
+ * DOM walk, but this check also protects against code accidentally wrapped in
+ * a div or span.
+ */
+export function isPureCodeContent(text: string): boolean {
+  if (!text || typeof text !== 'string') return false;
+  const value = text.replace(/\s+/gu, ' ').trim();
+  if (!value) return false;
+
+  // URLs, email addresses, markup, paths, UUIDs and long hexadecimal hashes
+  // are identifiers rather than prose.
+  if (
+    /^(?:https?:\/\/|ftp:\/\/|www\.)\S+$/i.test(value) ||
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ||
+    /^<\/?[A-Za-z][^>]*>$/.test(value) ||
+    /^(?:[A-Za-z]:[\\/]|\.{0,2}\/|~\/)[^\s]+$/.test(value) ||
+    /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9a-f]{16,})$/i.test(
+      value,
+    )
+  ) {
+    return true;
+  }
+
+  // Shell/package-manager and VCS commands are commonly rendered in logs or
+  // documentation without a <code> wrapper. The verb/subcommand anchors keep
+  // ordinary prose such as “install the package” eligible.
+  if (
+    /^(?:sudo\s+)?(?:npm|pnpm|yarn|bun|npx)\s+(?:install|i|add|remove|uninstall|update|upgrade|run|exec|dlx|test|build|start|publish)\b/i.test(
+      value,
+    ) ||
+    /^(?:git|hg|svn)\s+(?:clone|checkout|commit|push|pull|fetch|branch|merge|rebase|status|diff|log|show|reset|stash|add|rm|mv|tag|remote|config)\b/i.test(
+      value,
+    )
+  ) {
+    return true;
+  }
+
+  // Uppercase SQL keywords are a useful signal that this is a query rather
+  // than an instruction such as “select an option”.
+  if (
+    /^(?:SELECT\b[\s\S]*\bFROM\b|INSERT\s+INTO\b|UPDATE\s+\S+\s+SET\b|DELETE\s+FROM\b|(?:CREATE|ALTER|DROP)\s+(?:TABLE|INDEX|VIEW|DATABASE|SCHEMA)\b|WITH\s+\w+\s+AS\s*\()/i.test(
+      value,
+    ) &&
+    /\b(?:SELECT|FROM|INTO|UPDATE|DELETE|CREATE|ALTER|DROP|WHERE|JOIN|SET|VALUES|AS)\b/.test(
+      value,
+    )
+  ) {
+    return true;
+  }
+
+  // JSON/config payloads and common programming-language statements.
+  if (/^[{[][^\n]*[}\]]$/.test(value) && /["':,]/.test(value)) return true;
+  if (
+    /^(?:(?:async\s+)?(?:const|let|var|function|interface|type|enum|import|export)\b.*[=;{}()<>]|(?:if|for|while|switch|catch)\s*\([^)]*\)|(?:return|throw|new)\b.*[;{}()=]|#!?\/)/.test(
+      value,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /^(?:[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\([^)]*\)\s*;?$/.test(value) ||
+    /^[\w$.[\]"']+\s*(?:===?|!==?|=>)\s*[^;]+;?$/.test(value) ||
+    /^(?:[^{}]+)\{[^{}]*:[^{}]*\}$/.test(value) ||
+    /(?:=>|===|!==|&&|\|\||\+\+|--|::)/.test(value)
+  ) {
+    return true;
+  }
+
+  // A single identifier/version token with code punctuation or digits is
+  // overwhelmingly a slug, package name, selector, or version number. Keep
+  // ordinary hyphenated words eligible for translation.
+  if (
+    !/\s/.test(value) &&
+    /^[A-Za-z0-9_$./\\-]+$/.test(value) &&
+    (value.includes('_') ||
+      value.includes('.') ||
+      value.includes('/') ||
+      value.includes('\\') ||
+      /\d/.test(value) ||
+      /^[a-z]+[A-Z][A-Za-z0-9]*$/.test(value))
+  ) {
+    return true;
+  }
+
+  // Operators/braces only count as code when there is also an assignment or
+  // a code-like identifier; a normal sentence containing punctuation should
+  // not be rejected.
+  return (
+    /[{};]/.test(value) &&
+    /(?:=|=>|\b(?:true|false|null|undefined|return|function|class)\b)/.test(value)
+  );
+}
+
+/**
+ * Cheap, conservative gate used before a request is queued. It filters
+ * content with fewer than three meaningful words per sentence, one/two-letter
+ * labels, symbols, identifiers, code, and values for which a translation
+ * cannot add useful information.
+ */
+export function shouldTranslateContent(text: string): boolean {
+  if (!text || typeof text !== 'string') return false;
+  const value = text.replace(/\s+/gu, ' ').trim();
+  if (!value || isPureCodeContent(value) || isNumericContent(value)) return false;
+
+  const letters = value.match(LETTERS_RE)?.length ?? 0;
+  if (letters < 2 || !LETTER_RE.test(value)) return false;
+
+  // A one-token two-letter label (OK, Go, No, etc.) is normally a button
+  // state, abbreviation, or name. Longer prose and CJK phrases remain valid.
+  const words = value.split(/\s+/u).filter(Boolean);
+  if (words.length === 1 && letters <= 2) return false;
+  return hasAtLeastThreeWordsPerSentence(value);
+}
+
 function isUserIdentifier(text: string): boolean {
   const trimmed = stripWhitespace(text);
   if (!trimmed) return false;
   if (/^@\w+/.test(trimmed) || /^u\/\w+/.test(trimmed)) return true;
   if (/^id@https?:\/\/(x\.com|twitter\.com)\/[\w-]+\/status\/[0-9]+/.test(trimmed)) return true;
   if (/关注.*\w+/.test(trimmed) || /Follow.*\w+/.test(trimmed)) return true;
-  if (/^[A-Za-z0-9_]{1,15}$/.test(trimmed)) return true;
+  if (/^(?=.*[0-9_])[A-Za-z0-9_]{1,15}$/.test(trimmed)) return true;
   if (/点击.*\w+/.test(trimmed) && trimmed.length < 50) return true;
   return false;
 }
@@ -595,25 +828,41 @@ export function isNumericContent(text: string): boolean {
  * sending a spinner or a previous bilingual result back to the service.
  */
 export function LLMStandardHTML(node: Element): string {
+  const rootTag = node.tagName.toLowerCase();
+  if (
+    hasSkippedAncestor(node) ||
+    (!['html', 'body'].includes(rootTag) &&
+      (skipSet.has(rootTag) || !isVisible(node)))
+  ) {
+    return '';
+  }
+
   const serialize = (current: Node): string => {
     if (current.nodeType === Node.TEXT_NODE) return current.nodeValue || '';
     if (!(current instanceof Element)) return '';
 
     const tag = current.tagName.toLowerCase();
-    if (isOwnedElement(current) || skipSet.has(tag)) return '';
+    // Keep serialization consistent with getTranslatableText(). In
+    // particular, a visible parent may contain hidden or translate="no"
+    // descendants that must not leak into the request.
+    if (isOwnedElement(current) || skipSet.has(tag) || !isVisible(current)) return '';
 
     if (inlineSet.has(tag)) {
-      const clone = current.cloneNode(true) as Element;
-      clone.querySelectorAll(`[${OWNED_ATTR}], .fluent-read-loading, .fluent-read-retry-wrapper`).forEach(
-        (owned) => owned.remove(),
-      );
+      // Serialize children through the same skip rules. A deep clone would
+      // accidentally put nested <code>, <svg>, or extension UI back into the
+      // request even though those subtrees are excluded at the root walk.
+      const clone = current.cloneNode(false) as Element;
+      clone.innerHTML = Array.from(current.childNodes).map(serialize).join('');
       clone.removeAttribute(TRANSLATED_ATTR);
       clone.removeAttribute(TRANSLATION_ID_ATTR);
-      if (tag === 'img' || tag === 'br' || tag === 'wbr') {
-        clone.removeAttribute('alt');
-        clone.removeAttribute('title');
-        clone.removeAttribute('aria-label');
-      }
+      // Image descriptions belong to the image, not the surrounding prose.
+      // Remove them from every nested image as well as a direct <img>/<br>
+      // unit, while leaving the live page attributes untouched.
+      [clone, ...clone.querySelectorAll('img, br, wbr')].forEach((element) => {
+        element.removeAttribute('alt');
+        element.removeAttribute('title');
+        element.removeAttribute('aria-label');
+      });
       return clone.outerHTML;
     }
 

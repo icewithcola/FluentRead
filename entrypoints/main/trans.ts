@@ -8,9 +8,10 @@ import {
   grabNode,
   grabAllNode,
   LLMStandardHTML,
+  getTranslatableText,
   sanitizeTranslationHTML,
   smashTruncationStyle,
-  isNumericContent,
+  shouldTranslateContent,
 } from '@/entrypoints/main/dom';
 import { detectlang, throttle } from '@/entrypoints/utils/common';
 import { getMainDomain, replaceCompatFn } from '@/entrypoints/main/compat';
@@ -194,13 +195,14 @@ function releaseRecord(record: TranslationRecord): void {
 function createRecord(element: Element, generation: number): TranslationRecord | null {
   if (!(element instanceof HTMLElement) || !element.isConnected) return null;
   if (element.hasAttribute(TRANSLATED_ID_ATTR) || element.hasAttribute(TRANSLATED_ATTR)) return null;
+  if (!shouldTranslateContent(getTranslatableText(element))) return null;
 
   const record: TranslationRecord = {
     id: `fr-node-${nodeIdCounter++}`,
     element,
     originalHTML: element.innerHTML,
     originalOuterHTML: element.outerHTML,
-    originalText: element.textContent || '',
+    originalText: getTranslatableText(element),
     requestHTML: LLMStandardHTML(element),
     generation,
     status: 'pending',
@@ -216,6 +218,10 @@ function createRecord(element: Element, generation: number): TranslationRecord |
 
 function beginContext(element: HTMLElement, forceRetry = false): TranslationContext | null {
   const record = records.get(element);
+  // Manual hover calls can bypass DOM discovery, so apply the same cheap gate
+  // before allocating request state. Existing records keep their captured
+  // source, which also makes retries stable if the page changed meanwhile.
+  if (!record && !shouldTranslateContent(getTranslatableText(element))) return null;
   if (record) {
     if (!recordIsCurrent(record)) return null;
     if (record.status === 'translating') return null;
@@ -245,7 +251,7 @@ function beginContext(element: HTMLElement, forceRetry = false): TranslationCont
     generation: sessionGeneration,
     sourceHTML: record?.originalHTML ?? element.innerHTML,
     sourceOuterHTML: record?.originalOuterHTML ?? element.outerHTML,
-    sourceText: record?.originalText ?? element.textContent ?? '',
+    sourceText: record?.originalText ?? getTranslatableText(element),
     requestHTML: record?.requestHTML ?? LLMStandardHTML(element),
     lastOwnedHTML: record?.originalHTML ?? element.innerHTML,
   };
@@ -755,11 +761,12 @@ export function handleSingleTranslation(
   runSingleTranslation(context, forceBypassCache);
 }
 
-/** Button translation remains a public helper, but now uses the same queue. */
+/** Legacy helper retained for callers; button controls are intentionally skipped. */
 export const handleBtnTranslation = throttle((node: HTMLElement) => {
+  if (node.tagName.toLowerCase() === 'button' || node.closest('button')) return;
   const origin = node.innerText;
   const generation = sessionGeneration;
-  if (!origin || isNumericContent(origin)) return;
+  if (!shouldTranslateContent(origin)) return;
   const cached = cache.localGet(origin);
   if (cached) {
     if (node.isConnected && node.innerText === origin) node.innerText = cached;
