@@ -67,6 +67,9 @@ export const skipSet = new Set([
   'portal',
 ]);
 
+/** ARIA landmarks equivalent to the semantic header/footer elements above. */
+const skipRoleSet = new Set(['banner', 'contentinfo']);
+
 /** Inline markup which can safely remain inside a translation unit. */
 export const inlineSet = new Set([
   'a',
@@ -307,12 +310,20 @@ function hasMeaningfulText(text: string | null | undefined): boolean {
   return !!text && stripWhitespace(text).length > 0;
 }
 
+function isSkippedElement(element: Element): boolean {
+  if (skipSet.has(element.tagName.toLowerCase())) return true;
+  const roles = element.getAttribute('role')?.toLowerCase().split(/\s+/u) ?? [];
+  return roles.some((role) => skipRoleSet.has(role));
+}
+
 function hasSkippedAncestor(element: Element): boolean {
   let current = element.parentElement;
   while (current) {
     const tag = current.tagName.toLowerCase();
     // html/body are scan wrappers, not skipped content boundaries.
-    if (skipSet.has(tag) && tag !== 'html' && tag !== 'body') return true;
+    if (tag !== 'html' && tag !== 'body' && isSkippedElement(current)) {
+      return true;
+    }
     current = current.parentElement;
   }
   return false;
@@ -329,7 +340,7 @@ export function getTranslatableText(element: Element): string {
     }
     if (!(node instanceof Element)) return;
     if (
-      skipSet.has(node.tagName.toLowerCase()) ||
+      isSkippedElement(node) ||
       isOwnedElement(node) ||
       !isVisible(node)
     ) {
@@ -402,7 +413,7 @@ function isVisible(element: Element): boolean {
 function hasBlockChild(element: Element): boolean {
   return Array.from(element.children).some((child) => {
     const tag = child.tagName.toLowerCase();
-    if (skipSet.has(tag) || isOwnedElement(child)) return false;
+    if (isSkippedElement(child) || isOwnedElement(child)) return false;
     if (!hasMeaningfulText(child.textContent)) return false;
     return !inlineSet.has(tag);
   });
@@ -450,9 +461,8 @@ function isMainlyNumericContent(element: Element): boolean {
 
 function isSafeElement(element: Element): boolean {
   if (!(element instanceof Element)) return false;
-  const tag = element.tagName.toLowerCase();
   return (
-    !skipSet.has(tag) &&
+    !isSkippedElement(element) &&
     !hasSkippedAncestor(element) &&
     !isInsideExcludedTree(element) &&
     !element.hasAttribute(TRANSLATED_ATTR) &&
@@ -514,9 +524,8 @@ export function grabAllNode(rootNode: Node): Element[] {
 
   const visit = (element: Element) => {
     if (!element || !element.isConnected) return;
-    const tag = element.tagName.toLowerCase();
     if (
-      skipSet.has(tag) ||
+      isSkippedElement(element) ||
       !isVisible(element) ||
       isOwnedElement(element) ||
       isInsideExcludedTree(element)
@@ -548,7 +557,7 @@ export function grabAllNode(rootNode: Node): Element[] {
   if (rootNode instanceof Element) {
     // `document.body` is a scan root, not a translation boundary. The same
     // applies to callers passing an html/body wrapper explicitly.
-    if (skipSet.has(rootNode.tagName.toLowerCase())) {
+    if (['html', 'body'].includes(rootNode.tagName.toLowerCase())) {
       Array.from(rootNode.children).forEach(visit);
     } else {
       visit(rootNode);
@@ -574,7 +583,7 @@ export function grabNode(node: Node | null | undefined): Element | false {
   while (element && !visited.has(element)) {
     visited.add(element);
     const tag = element.tagName.toLowerCase();
-    if (skipSet.has(tag)) return false;
+    if (isSkippedElement(element)) return false;
     if (element.hasAttribute(TRANSLATED_ATTR) || element.hasAttribute(TRANSLATION_ID_ATTR)) {
       return false;
     }
@@ -832,7 +841,7 @@ export function LLMStandardHTML(node: Element): string {
   if (
     hasSkippedAncestor(node) ||
     (!['html', 'body'].includes(rootTag) &&
-      (skipSet.has(rootTag) || !isVisible(node)))
+      (isSkippedElement(node) || !isVisible(node)))
   ) {
     return '';
   }
@@ -845,7 +854,7 @@ export function LLMStandardHTML(node: Element): string {
     // Keep serialization consistent with getTranslatableText(). In
     // particular, a visible parent may contain hidden or translate="no"
     // descendants that must not leak into the request.
-    if (isOwnedElement(current) || skipSet.has(tag) || !isVisible(current)) return '';
+    if (isOwnedElement(current) || isSkippedElement(current) || !isVisible(current)) return '';
 
     if (inlineSet.has(tag)) {
       // Serialize children through the same skip rules. A deep clone would
