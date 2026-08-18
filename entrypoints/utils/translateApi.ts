@@ -1,9 +1,12 @@
 /**
- * 翻译API代理模块
- * 整合翻译队列管理，作为翻译函数和后台翻译服务之间的中间层
+ * Translation transport facade.
+ *
+ * Requests are queued, time-limited, retryable, and cancellable. The queue's
+ * AbortSignal is threaded through both ordinary runtime messages and stream
+ * ports so a restore/session change cannot leave transports alive forever.
  */
 
-import { enqueueTranslation, clearTranslationQueue, getQueueStatus } from './translateQueue';
+import { enqueueTranslation, clearTranslationQueue, getQueueStatus, TranslationCancelledError } from './translateQueue';
 import browser from 'webextension-polyfill';
 import { config } from './config';
 import { cache } from './cache';
@@ -11,21 +14,71 @@ import { detectlang } from './common';
 import { storage } from '@wxt-dev/storage';
 import { getCurrentPageSummary } from './pageSummary';
 
-// 调试相关
 const isDev = process.env.NODE_ENV === 'development';
 
-/**
- * 翻译API的统一入口
- * 所有翻译请求都应该通过此函数发送，以便集中管理队列和重试逻辑
- *
- * @param origin 原始文本
- * @param context 上下文信息，通常是页面标题
- * @param options 翻译选项
- * @returns 翻译结果的Promise
- */
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new TranslationCancelledError();
+  }
+}
+
+function isCancelled(signal: AbortSignal, error: unknown): boolean {
+  return signal.aborted || error instanceof TranslationCancelledError;
+}
+
+function wait(delay: number, signal: AbortSignal): Promise<void> {
+  if (delay <= 0) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onAbort = () => {
+      if (timer) clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      reject(signal.reason instanceof Error ? signal.reason : new TranslationCancelledError());
+    };
+    timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, delay);
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+}
+
+async function withTimeout<T>(
+  request: Promise<T> | PromiseLike<T>,
+  timeout: number,
+  signal: AbortSignal,
+  timeoutMessage: string,
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let abortListener: (() => void) | undefined;
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), timeout);
+      abortListener = () => {
+        reject(signal.reason instanceof Error ? signal.reason : new TranslationCancelledError());
+      };
+      signal.addEventListener('abort', abortListener, { once: true });
+      Promise.resolve(request).then(resolve, reject);
+      if (signal.aborted) abortListener();
+    });
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+    if (abortListener) signal.removeEventListener('abort', abortListener);
+  }
+}
+
+function incrementTranslationCount(): void {
+  config.count++;
+  // Persistence is best effort; a storage failure must not turn a successful
+  // translation into a failed DOM update.
+  void Promise.resolve(storage.setItem('local:config', JSON.stringify(config))).catch(() => undefined);
+}
+
+/** Unified non-streaming translation entry point. */
 export async function translateText(
   origin: string,
-  context: string = document.title,
+  context: string = typeof document === 'undefined' ? '' : document.title,
   options: TranslateOptions = {},
 ): Promise<string> {
   const {
@@ -35,232 +88,184 @@ export async function translateText(
     useCache = config.useCache,
     bypassCacheRead = false,
   } = options;
+  const retryLimit = Number.isFinite(Number(maxRetries))
+    ? Math.max(0, Math.floor(Number(maxRetries)))
+    : 0;
+  const retryInterval = Number.isFinite(Number(retryDelay)) ? Math.max(0, Number(retryDelay)) : 0;
 
-  // 如果目标语言与当前文本语言相同，直接返回原文
-  if (detectlang(origin.replace(/[\s\u3000]/g, '')) === config.to) {
-    return origin;
-  }
+  if (detectlang(origin.replace(/[\s\u3000]/g, '')) === config.to) return origin;
 
-  // 检查缓存
   if (useCache && !bypassCacheRead) {
     const cachedResult = cache.localGet(origin);
-    if (cachedResult) {
-      if (isDev) {
-        console.log('[翻译API] 命中缓存，直接返回缓存结果');
-      }
-      return cachedResult;
-    }
+    if (cachedResult) return cachedResult;
   }
 
-  // 增加翻译计数
-  config.count++;
-  // 保存配置以确保计数持久化
-  storage.setItem('local:config', JSON.stringify(config));
+  return enqueueTranslation(async (signal) => {
+    throwIfAborted(signal);
+    incrementTranslationCount();
 
-  // 使用队列处理翻译请求
-  return enqueueTranslation(async () => {
-    // 创建翻译任务
-    const translationTask = async (retryCount: number = 0): Promise<string> => {
+    const attempt = async (retryCount: number): Promise<string> => {
+      throwIfAborted(signal);
       try {
-        // 发送翻译请求给background脚本处理
-        // Always call getCurrentPageSummary(); it returns "" if not ready yet
         const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
-        const result = (await Promise.race([
+        const result = await withTimeout(
           browser.runtime.sendMessage({ context, origin, pageSummary }),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('翻译请求超时')), timeout),
-          ),
-        ])) as string;
+          timeout,
+          signal,
+          '翻译请求超时',
+        );
 
-        // 检查返回结果是否是错误对象
         if (result && typeof result === 'object') {
-          const resObj = result as any;
-          if (resObj.success === false || resObj.error) {
-            throw new Error(resObj.error || '翻译失败');
+          const response = result as any;
+          if (response.success === false || response.error) {
+            throw new Error(response.error || '翻译失败');
           }
         }
-
-        // 确保结果是有效的字符串，并且不包含 [object Object]
         if (typeof result !== 'string' || result.includes('[object Object]')) {
           throw new Error('翻译返回了无效的响应格式');
         }
+        if (!result || result === origin) return '';
 
-        // 如果翻译结果为空或与原文完全相同，直接返回空
-        if (!result || result === origin) {
-          return '';
-        }
-
-        // 缓存翻译结果
-        if (useCache) {
-          cache.localSet(origin, result);
-        }
-
+        if (useCache) cache.localSet(origin, result);
         return result;
       } catch (error) {
-        // 处理错误，根据重试策略决定是否重试
-        if (retryCount < maxRetries) {
-          if (isDev) {
-            console.log(`[翻译API] 翻译失败，${retryCount + 1}/${maxRetries} 次重试，原因:`, error);
-          }
-
-          // 等待一段时间后重试
-          await new Promise((resolve) => setTimeout(resolve, retryDelay));
-          return translationTask(retryCount + 1);
+        if (isCancelled(signal, error)) throw error;
+        if (retryCount >= retryLimit) throw error;
+        if (isDev) {
+          console.log(`[翻译API] 翻译失败，${retryCount + 1}/${retryLimit} 次重试，原因:`, error);
         }
-
-        // 超过最大重试次数，抛出异常
-        throw error;
+        await wait(retryInterval, signal);
+        return attempt(retryCount + 1);
       }
     };
 
-    // 开始执行翻译任务
-    return translationTask();
+    return attempt(0);
   });
 }
 
-/**
- * 当用户离开页面或主动取消翻译时，清空翻译队列
- */
-export function cancelAllTranslations() {
-  if (isDev) {
-    console.log('[翻译API] 取消所有等待中的翻译任务');
-  }
+/** Cancel queued requests and abort active transports. */
+export function cancelAllTranslations(): void {
+  if (isDev) console.log('[翻译API] 取消所有等待中的翻译任务');
   clearTranslationQueue();
 }
 
-/**
- * 获取当前翻译队列的状态
- * 可用于UI显示翻译进度等
- */
 export function getTranslationStatus() {
   return getQueueStatus();
 }
 
-/**
- * 翻译参数接口
- */
 export interface TranslateOptions {
-  /** 最大重试次数 */
   maxRetries?: number;
-  /** 重试间隔(毫秒) */
   retryDelay?: number;
-  /** 超时时间(毫秒) */
   timeout?: number;
-  /** 是否使用缓存 */
   useCache?: boolean;
-  /** 是否跳过读取缓存 */
   bypassCacheRead?: boolean;
 }
 
-/**
- * Streaming translation via Port connection.
- * Sends a translation request to background and calls onChunk for each delta received.
- * Returns the final complete translation result.
- *
- * @param origin Original text
- * @param context Context info (page title)
- * @param onChunk Callback invoked with each accumulated text chunk
- * @param options Translation options
- */
+/** Streaming translation over a cancellable runtime Port. */
 export async function translateTextStream(
   origin: string,
-  context: string = document.title,
+  context: string = typeof document === 'undefined' ? '' : document.title,
   onChunk: (accumulated: string) => void,
   options: TranslateOptions = {},
 ): Promise<string> {
   const { timeout = 60000, useCache = config.useCache, bypassCacheRead = false } = options;
 
-  // Check if target language matches source
-  if (detectlang(origin.replace(/[\s\u3000]/g, '')) === config.to) {
-    return origin;
-  }
-
-  // Check cache
+  if (detectlang(origin.replace(/[\s\u3000]/g, '')) === config.to) return origin;
   if (useCache && !bypassCacheRead) {
     const cachedResult = cache.localGet(origin);
-    if (cachedResult) {
-      if (isDev) {
-        console.log('[翻译API] 流式翻译命中缓存');
-      }
-      return cachedResult;
-    }
+    if (cachedResult) return cachedResult;
   }
 
-  // Increment translation count
-  config.count++;
-  storage.setItem('local:config', JSON.stringify(config));
+  return enqueueTranslation(
+    (signal) =>
+      new Promise<string>((resolve, reject) => {
+        let port: browser.Runtime.Port;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        let settled = false;
 
-  return enqueueTranslation(async () => {
-    return new Promise<string>((resolve, reject) => {
-      const port = browser.runtime.connect({ name: 'stream-translate' });
-      let timeoutId: any = null;
-      let settled = false;
+        const cleanup = () => {
+          if (timeoutId) clearTimeout(timeoutId);
+          signal.removeEventListener('abort', onAbort);
+          port?.onMessage.removeListener(onMessage);
+          port?.onDisconnect.removeListener(onDisconnect);
+        };
 
-      const safeResolve = (val: string) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeoutId);
-        resolve(val);
-      };
-
-      const safeReject = (err: Error) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeoutId);
-        reject(err);
-      };
-
-      // Set timeout
-      timeoutId = setTimeout(() => {
-        port.disconnect();
-        safeReject(new Error('流式翻译请求超时'));
-      }, timeout);
-
-      port.onMessage.addListener((msg: any) => {
-        if (msg.type === 'stream-chunk') {
-          // Call onChunk with accumulated text for progressive DOM update
-          onChunk(msg.accumulated);
-        } else if (msg.type === 'stream-done') {
-          const result = msg.result;
-
-          // Check if result is an error object
-          if (result && typeof result === 'object') {
-            const resObj = result as any;
-            if (resObj.success === false || resObj.error) {
-              port.disconnect();
-              safeReject(new Error(resObj.error || '流式翻译失败'));
-              return;
-            }
+        const safeResolve = (value: string) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          try {
+            port?.disconnect();
+          } catch {
+            // The browser may already have disconnected the port.
           }
+          resolve(value);
+        };
 
-          // Ensure result is a valid string and doesn't contain [object Object]
-          if (typeof result !== 'string' || result.includes('[object Object]')) {
-            port.disconnect();
-            safeReject(new Error('流式翻译返回了无效的响应格式'));
+        const safeReject = (error: unknown) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          try {
+            port?.disconnect();
+          } catch {
+            // Ignore a duplicate disconnect during teardown.
+          }
+          reject(error);
+        };
+
+        const onAbort = () =>
+          safeReject(signal.reason instanceof Error ? signal.reason : new TranslationCancelledError());
+
+        const onMessage = (message: any) => {
+          if (message?.type === 'stream-chunk') {
+            try {
+              onChunk(message.accumulated);
+            } catch (error) {
+              safeReject(error);
+            }
             return;
           }
 
-          if (result && useCache) {
-            cache.localSet(origin, result);
+          if (message?.type === 'stream-error') {
+            safeReject(new Error(message.error || '流式翻译失败'));
+            return;
           }
-          port.disconnect();
+
+          if (message?.type !== 'stream-done') return;
+          const result = message.result;
+          if (result && typeof result === 'object') {
+            const response = result as any;
+            if (response.success === false || response.error) {
+              safeReject(new Error(response.error || '流式翻译失败'));
+              return;
+            }
+          }
+          if (typeof result !== 'string' || result.includes('[object Object]')) {
+            safeReject(new Error('流式翻译返回了无效的响应格式'));
+            return;
+          }
+          if (result && useCache) cache.localSet(origin, result);
           safeResolve(result || '');
-        } else if (msg.type === 'stream-error') {
-          port.disconnect();
-          safeReject(new Error(msg.error || '流式翻译失败'));
-        }
-      });
+        };
 
-      // Handle disconnection
-      port.onDisconnect.addListener(() => {
-        if (!settled) {
-          safeReject(new Error('流式翻译连接意外断开'));
-        }
-      });
+        const onDisconnect = () => {
+          if (!settled) safeReject(new Error('流式翻译连接意外断开'));
+        };
 
-      // Send translation request with page summary context from content script
-      const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
-      port.postMessage({ context, origin, pageSummary });
-    });
-  });
+        try {
+          throwIfAborted(signal);
+          incrementTranslationCount();
+          port = browser.runtime.connect({ name: 'stream-translate' });
+          port.onMessage.addListener(onMessage);
+          port.onDisconnect.addListener(onDisconnect);
+          signal.addEventListener('abort', onAbort, { once: true });
+          timeoutId = setTimeout(() => safeReject(new Error('流式翻译请求超时')), timeout);
+          const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
+          port.postMessage({ context, origin, pageSummary });
+        } catch (error) {
+          safeReject(error);
+        }
+      }),
+  );
 }

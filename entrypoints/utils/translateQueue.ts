@@ -1,103 +1,123 @@
 /**
- * 翻译队列管理模块
- * 控制并发翻译任务的数量，避免同时进行过多翻译请求
+ * Bounded translation queue with explicit cancellation.
+ *
+ * Queued promises used to be discarded by `clearTranslationQueue`, leaving
+ * every caller awaiting forever. Active requests also had no signal, so a
+ * restore could be followed by a late DOM write. Each task now owns an
+ * AbortController; clearing the queue rejects both pending and active callers
+ * and lets the API layer stop its timers/ports.
  */
 
 import { config } from './config';
 
-// 队列状态
-let activeTranslations = 0; // 当前活跃的翻译任务数量
-let pendingTranslations: Array<() => Promise<any>> = []; // 等待执行的翻译任务队列
-
-// 调试相关
-const isDev = process.env.NODE_ENV === 'development';
-
-// 获取最大并发翻译数量
-function getMaxConcurrentTranslations(): number {
-  return config.maxConcurrentTranslations || 6; // 默认值为6
+export class TranslationCancelledError extends Error {
+  constructor(message = '翻译已取消') {
+    super(message);
+    this.name = 'TranslationCancelledError';
+  }
 }
 
-/**
- * 添加翻译任务到队列
- * @param translationTask 翻译任务函数, 需要返回Promise
- * @returns 返回一个Promise，当任务执行完成时resolve
- */
-export function enqueueTranslation<T>(translationTask: () => Promise<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    // 创建任务包装器，在任务完成后处理队列状态
-    const taskWrapper = async () => {
-      try {
-        // 执行实际的翻译任务
-        const result = await translationTask();
-        resolve(result);
-        return result;
-      } catch (error) {
-        reject(error);
-        throw error;
-      } finally {
-        // 无论成功失败，都需要减少活跃任务计数并处理队列
-        activeTranslations--;
-        processQueue();
+type TranslationTask<T> = (signal: AbortSignal) => Promise<T>;
+
+interface QueueEntry<T> {
+  execute: TranslationTask<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+  controller: AbortController;
+  settled: boolean;
+}
+
+const pendingTranslations: Array<QueueEntry<unknown>> = [];
+const activeTranslations = new Set<QueueEntry<unknown>>();
+
+function getMaxConcurrentTranslations(): number {
+  const configured = Number(config.maxConcurrentTranslations);
+  return Number.isFinite(configured) && configured > 0 ? Math.max(1, Math.floor(configured)) : 6;
+}
+
+function settle<T>(entry: QueueEntry<T>, error?: unknown, value?: T): void {
+  if (entry.settled) return;
+  entry.settled = true;
+  if (error !== undefined) entry.reject(error);
+  else entry.resolve(value as T);
+}
+
+function runEntry<T>(entry: QueueEntry<T>): void {
+  activeTranslations.add(entry as QueueEntry<unknown>);
+
+  Promise.resolve()
+    .then(() => {
+      if (entry.controller.signal.aborted) {
+        throw entry.controller.signal.reason instanceof Error
+          ? entry.controller.signal.reason
+          : new TranslationCancelledError();
       }
+      return entry.execute(entry.controller.signal);
+    })
+    .then((value) => settle(entry, undefined, value))
+    .catch((error) => settle(entry, error))
+    .finally(() => {
+      activeTranslations.delete(entry as QueueEntry<unknown>);
+      processQueue();
+    });
+}
+
+function processQueue(): void {
+  const maxConcurrent = getMaxConcurrentTranslations();
+  while (pendingTranslations.length > 0 && activeTranslations.size < maxConcurrent) {
+    const next = pendingTranslations.shift();
+    if (!next || next.settled) continue;
+    runEntry(next);
+  }
+}
+
+/** Add a task to the bounded queue. */
+export function enqueueTranslation<T>(translationTask: TranslationTask<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const entry: QueueEntry<T> = {
+      execute: translationTask,
+      resolve,
+      reject,
+      controller: new AbortController(),
+      settled: false,
     };
 
-    // 将任务添加到队列
-    if (activeTranslations < getMaxConcurrentTranslations()) {
-      // 直接执行任务
-      activeTranslations++;
-      taskWrapper();
-    } else {
-      pendingTranslations.push(taskWrapper);
-    }
+    if (activeTranslations.size < getMaxConcurrentTranslations()) runEntry(entry);
+    else pendingTranslations.push(entry as QueueEntry<unknown>);
   });
 }
 
 /**
- * 处理队列中的下一个任务
+ * Cancel all queued and active tasks. Active task bookkeeping remains until
+ * their promise finally settles, preventing a new request from exceeding the
+ * concurrency cap while an underlying transport is still unwinding.
  */
-function processQueue() {
-  // 如果有等待的任务，并且活跃任务数量未达到上限，执行下一个任务
-  if (pendingTranslations.length > 0 && activeTranslations < getMaxConcurrentTranslations()) {
-    const nextTask = pendingTranslations.shift();
-    if (nextTask) {
-      activeTranslations++;
-      nextTask().catch(() => {
-        // 错误已在任务内部处理，这里仅防止未捕获的Promise异常
-      });
+export function clearTranslationQueue(reason = new TranslationCancelledError()): void {
+  while (pendingTranslations.length > 0) {
+    const entry = pendingTranslations.shift();
+    if (entry) {
+      entry.controller.abort(reason);
+      settle(entry, reason);
     }
   }
+
+  activeTranslations.forEach((entry) => {
+    entry.controller.abort(reason);
+    settle(entry, reason);
+  });
 }
 
-/**
- * 清空翻译队列
- * 当页面切换或用户手动停止翻译时调用
- */
-export function clearTranslationQueue() {
-  pendingTranslations = [];
-  // 不重置activeTranslations，让活跃的翻译任务自然完成
-}
-
-/**
- * 获取队列状态
- * @returns 返回当前队列状态对象
- */
 export function getQueueStatus() {
   const maxConcurrent = getMaxConcurrentTranslations();
   return {
-    activeTranslations,
+    activeTranslations: activeTranslations.size,
     pendingTranslations: pendingTranslations.length,
-    maxConcurrent: maxConcurrent,
-    isQueueFull: activeTranslations >= maxConcurrent,
-    totalTasksInProcess: activeTranslations + pendingTranslations.length,
+    maxConcurrent,
+    isQueueFull: activeTranslations.size >= maxConcurrent,
+    totalTasksInProcess: activeTranslations.size + pendingTranslations.length,
   };
 }
 
-/**
- * 检查是否可以添加更多任务
- * 当快速扫描页面，判断是否需要暂停扫描时使用
- */
 export function canAcceptMoreTasks(): boolean {
-  // 如果等待队列太长，返回false表示需要暂停扫描
-  const MAX_QUEUE_LENGTH = getMaxConcurrentTranslations() * 3;
-  return pendingTranslations.length < MAX_QUEUE_LENGTH;
+  return pendingTranslations.length < getMaxConcurrentTranslations() * 3;
 }

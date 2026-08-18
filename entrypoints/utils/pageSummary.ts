@@ -54,6 +54,35 @@ const SKIP_TAGS = new Set([
   'FORM',
   'MENU',
   'MENUITEM',
+  'TEMPLATE',
+]);
+
+// Elements that separate independent pieces of prose.  We retain these
+// boundaries as newlines in the plain-text prompt without sending any HTML.
+const BLOCK_TAGS = new Set([
+  'ADDRESS',
+  'ARTICLE',
+  'BLOCKQUOTE',
+  'DD',
+  'DIV',
+  'DL',
+  'DT',
+  'FIGCAPTION',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6',
+  'LI',
+  'OL',
+  'P',
+  'PRE',
+  'SECTION',
+  'TABLE',
+  'TD',
+  'TH',
+  'UL',
 ]);
 
 // Selectors to try for finding the main content area (ordered by priority)
@@ -71,7 +100,10 @@ const MAIN_CONTENT_SELECTORS = [
   '.content',
 ];
 
-const MAX_TEXT_LENGTH = 3000;
+// Keep the input well below a 128K-token context window even for languages
+// whose characters are tokenized nearly one-to-one, while still allowing a
+// complete long-form article to contribute to the page context.
+const MAX_TEXT_LENGTH = 120_000;
 const MIN_TEXT_LENGTH = 50;
 const MAX_RATE_LIMIT_RETRIES = 2; // Max auto-retries on 429 rate limit
 const MAX_RETRY_WAIT_SECONDS = 120; // Don't wait more than 2 minutes
@@ -116,6 +148,28 @@ function findMainContentRoot(): Element | null {
 }
 
 /**
+ * Returns whether an element belongs to page chrome or otherwise hidden UI.
+ * Checking ancestors is important: a text node in a <span> inside <nav> must
+ * not be included simply because its immediate parent is not a skipped tag.
+ */
+function shouldSkipElement(element: Element): boolean {
+  return Boolean(
+    element.closest(
+      'script, style, nav, header, footer, noscript, svg, img, video, audio, canvas, iframe, input, textarea, select, button, aside, form, menu, menuitem, template, [hidden], [inert], [aria-hidden="true"], [id^="fluent-read-"], [class*="fluent-read-"]',
+    ),
+  );
+}
+
+function findBlockAncestor(element: Element, root: Element): Element | null {
+  let current: Element | null = element;
+  while (current && current !== root) {
+    if (BLOCK_TAGS.has(current.tagName)) return current;
+    current = current.parentElement;
+  }
+  return null;
+}
+
+/**
  * Extract text from a given root element using TreeWalker.
  * Skips non-content tags and hidden elements.
  */
@@ -125,10 +179,16 @@ function extractTextFromRoot(root: Element): string {
       const parent = node.parentElement;
       if (!parent) return NodeFilter.FILTER_REJECT;
 
-      if (SKIP_TAGS.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
+      if (SKIP_TAGS.has(parent.tagName) || shouldSkipElement(parent)) {
+        return NodeFilter.FILTER_REJECT;
+      }
 
       const style = window.getComputedStyle(parent);
-      if (style.display === 'none' || style.visibility === 'hidden') {
+      if (
+        style.display === 'none' ||
+        style.visibility === 'hidden' ||
+        style.contentVisibility === 'hidden'
+      ) {
         return NodeFilter.FILTER_REJECT;
       }
 
@@ -141,17 +201,27 @@ function extractTextFromRoot(root: Element): string {
 
   const parts: string[] = [];
   let totalLength = 0;
+  const seenBlocks = new Set<Element>();
 
   while (walker.nextNode()) {
-    const text = walker.currentNode.textContent?.trim() || '';
-    if (text) {
-      parts.push(text);
-      totalLength += text.length;
-      if (totalLength >= MAX_TEXT_LENGTH) break;
-    }
+    const text = walker.currentNode.textContent?.replace(/\s+/g, ' ').trim() || '';
+    if (!text) continue;
+
+    const parent = walker.currentNode.parentElement;
+    const block = parent ? findBlockAncestor(parent, root) : null;
+    const startsNewBlock = Boolean(block && !seenBlocks.has(block));
+    if (block) seenBlocks.add(block);
+
+    const separator = parts.length === 0 ? '' : startsNewBlock ? '\n\n' : ' ';
+    const remaining = MAX_TEXT_LENGTH - totalLength - separator.length;
+    if (remaining <= 0) break;
+
+    parts.push(separator, text.slice(0, remaining));
+    totalLength += separator.length + Math.min(text.length, remaining);
+    if (text.length > remaining) break;
   }
 
-  return parts.join(' ').slice(0, MAX_TEXT_LENGTH);
+  return parts.join('').trim();
 }
 
 /**
@@ -167,8 +237,8 @@ function extractTextByDensity(): string {
     'p, li, blockquote, dd, td, th, figcaption, h1, h2, h3, h4, h5, h6',
   );
   for (const el of allElements) {
-    // Skip elements inside SKIP_TAGS containers
-    if (el.closest('nav, header, footer, aside, form')) continue;
+    // Skip page chrome, extension UI, and hidden containers at any depth.
+    if (shouldSkipElement(el)) continue;
 
     const style = window.getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden') continue;
@@ -203,7 +273,8 @@ function extractTextByDensity(): string {
  * 2. Fallback: collect text from paragraph-like elements sorted by text density
  * 3. Last resort: walk the entire document.body (original behavior)
  *
- * Truncates to MAX_TEXT_LENGTH characters.
+ * Produces plain text only (no HTML tags) and limits it to MAX_TEXT_LENGTH
+ * characters.
  * Returns empty string if content is too short (< MIN_TEXT_LENGTH meaningful chars).
  */
 export function extractPageText(): string {
