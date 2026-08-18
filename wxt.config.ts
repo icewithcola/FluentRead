@@ -28,5 +28,11 @@ export default defineConfig({
     name: '喵喵阅读',
     description: '一款 AI 驱动的开源浏览器翻译插件，带来母语般的双语阅读体验',
     permissions: ['storage', 'contextMenus', 'offscreen'],
+    web_accessible_resources: [
+      {
+        resources: ['icon/*.png'],
+        matches: ['<all_urls>'],
+      },
+    ],
   },
 });
