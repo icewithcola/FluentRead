@@ -2,6 +2,10 @@
 
 > [English](https://github.com/Bistutu/FluentRead/blob/main/misc/README_EN.md) | 中文
 
+<p align="center">
+  <img src="./public/icon/512.png" alt="FluentRead 猫娘翻译助手图标" width="160">
+</p>
+
 Open Immersive Translate 开源的沉浸式翻译。
 
 一款革命性的浏览器开源翻译插件，让所有人都能够拥有母语般的阅读体验。
@@ -67,4 +71,3 @@ bun run zip
 # Star 历史记录
 
 [![Star History Chart](https://api.star-history.com/svg?repos=Bistutu/FluentRead&type=Date)](https://star-history.com/#Bistutu/FluentRead&Date)
-

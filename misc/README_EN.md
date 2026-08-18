@@ -2,6 +2,10 @@
 
 > [中文](https://github.com/Bistutu/FluentRead/blob/main/README.md) | English
 
+<p align="center">
+  <img src="../public/icon/512.png" alt="FluentRead catgirl translator icon" width="160">
+</p>
+
 A revolutionary open-source browser translation plugin that provides everyone with a native-like reading experience.
 
 1. [Official Documentation (Must Read)](https://fluent.thinkstu.com/)
