@@ -1,0 +1,79 @@
+name: Release extension
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_call:
+    inputs:
+      tag:
+        description: Tag to build and release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build ZIPs and publish release
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-${{ inputs.tag || github.ref_name }}
+      cancel-in-progress: false
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.1
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Verify tag matches package version
+        run: |
+          package_version="$(node -p "require('./package.json').version")"
+          if [[ "$RELEASE_TAG" != "v$package_version" ]]; then
+            echo "Tag $RELEASE_TAG does not match package.json version $package_version." >&2
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build production ZIP
+        run: |
+          pnpm run build
+          mkdir -p artifacts
+          cd .output/chrome-mv3
+          zip -r "$GITHUB_WORKSPACE/artifacts/FluentRead-$RELEASE_TAG-chrome.zip" .
+
+      - name: Build debug ZIP
+        run: |
+          pnpm run build:debug
+          cd .output/chrome-mv3
+          zip -r "$GITHUB_WORKSPACE/artifacts/FluentRead-$RELEASE_TAG-chrome-debug.zip" .
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" artifacts/*.zip --clobber
+          else
+            gh release create "$RELEASE_TAG" artifacts/*.zip \
+              --verify-tag \
+              --generate-notes \
+              --title "$RELEASE_TAG"
+          fi

@@ -1,0 +1,78 @@
+name: Auto tag version
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: Tag changed version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version_changed: ${{ steps.version.outputs.version_changed }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect version change
+        id: version
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          new_version="$(node -p "require('./package.json').version")"
+
+          node -e "const version = process.argv[1]; if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) { console.error('Invalid semantic version:', version); process.exit(1) }" "$new_version"
+
+          old_version=""
+          if [[ ! "$BEFORE_SHA" =~ ^0+$ ]] && git cat-file -e "$BEFORE_SHA:package.json" 2>/dev/null; then
+            old_version="$(git show "$BEFORE_SHA:package.json" | node -e "let input = ''; process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => process.stdout.write(JSON.parse(input).version ?? ''))")"
+          fi
+
+          if [[ "$new_version" == "$old_version" ]]; then
+            echo "package.json changed, but its version is still $new_version; no tag is needed."
+            echo "version_changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          tag="v$new_version"
+          echo "Version changed from ${old_version:-<none>} to $new_version."
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version_changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        if: steps.version.outputs.version_changed == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git rev-parse --quiet --verify "refs/tags/$TAG" >/dev/null; then
+            tagged_commit="$(git rev-list -n 1 "$TAG")"
+            if [[ "$tagged_commit" != "$GITHUB_SHA" ]]; then
+              echo "Tag $TAG already exists on commit $tagged_commit." >&2
+              exit 1
+            fi
+            echo "Tag $TAG already points to this commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --annotate "$TAG" --message "Release $TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
+
+  release:
+    name: Build and release
+    needs: tag
+    if: needs.tag.outputs.version_changed == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+    secrets: inherit
