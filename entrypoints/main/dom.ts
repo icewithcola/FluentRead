@@ -435,7 +435,12 @@ function hasTranslatableText(element: Element): boolean {
 function isOversized(element: Element): boolean {
   const text = getTranslatableText(element);
   const meaningfulLength = countMeaningfulChars(stripWhitespace(text));
-  return text.length > 3072 || element.outerHTML.length > 4096 || meaningfulLength === 0;
+  // The text.length check gates actual translatable content. outerHTML is only
+  // used as a safety net with a generous limit because it includes attributes
+  // (href, title, class, data-*) on inline children that are stripped before
+  // translation. The previous 4096 threshold falsely rejected Wikipedia <p>
+  // elements whose outerHTML is inflated by verbose link attributes.
+  return text.length > 3072 || element.outerHTML.length > 32768 || meaningfulLength === 0;
 }
 
 function isMainlyNumericContent(element: Element): boolean {
@@ -548,6 +553,14 @@ export function grabAllNode(rootNode: Node): Element[] {
     if (candidate && !seen.has(candidate)) {
       seen.add(candidate);
       result.push(candidate);
+      return;
+    }
+
+    // A directSet element (p, h1, li, etc.) is a self-contained prose unit.
+    // If it was rejected (e.g. oversized or numeric), descending into its
+    // inline children (links, spans) would translate them without the
+    // surrounding text context, producing broken fragments. Skip entirely.
+    if (!candidate && directSet.has(element.tagName.toLowerCase())) {
       return;
     }
 
