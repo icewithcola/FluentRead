@@ -432,17 +432,6 @@ function hasTranslatableText(element: Element): boolean {
   return !isOwnedElement(element) && shouldTranslateContent(getTranslatableText(element));
 }
 
-function isOversized(element: Element): boolean {
-  const text = getTranslatableText(element);
-  const meaningfulLength = countMeaningfulChars(stripWhitespace(text));
-  // The text.length check gates actual translatable content. outerHTML is only
-  // used as a safety net with a generous limit because it includes attributes
-  // (href, title, class, data-*) on inline children that are stripped before
-  // translation. The previous 4096 threshold falsely rejected Wikipedia <p>
-  // elements whose outerHTML is inflated by verbose link attributes.
-  return text.length > 3072 || element.outerHTML.length > 32768 || meaningfulLength === 0;
-}
-
 function isMainlyNumericContent(element: Element): boolean {
   const text = stripWhitespace(getTranslatableText(element));
   if (!text) return false;
@@ -475,8 +464,7 @@ function isSafeElement(element: Element): boolean {
     !(typeof HTMLElement !== 'undefined' && element instanceof HTMLElement && element.isContentEditable) &&
     isVisible(element) &&
     hasTranslatableText(element) &&
-    !isMainlyNumericContent(element) &&
-    !isOversized(element)
+    !isMainlyNumericContent(element)
   );
 }
 
@@ -557,7 +545,7 @@ export function grabAllNode(rootNode: Node): Element[] {
     }
 
     // A directSet element (p, h1, li, etc.) is a self-contained prose unit.
-    // If it was rejected (e.g. oversized or numeric), descending into its
+    // If it was rejected (e.g. numeric or non-prose), descending into its
     // inline children (links, spans) would translate them without the
     // surrounding text context, producing broken fragments. Skip entirely.
     if (!candidate && directSet.has(element.tagName.toLowerCase())) {
@@ -619,11 +607,6 @@ export function grabNode(node: Node | null | undefined): Element | false {
   return inlineFallback;
 }
 
-function countMeaningfulChars(text: string): number {
-  const matches = text.match(/[a-zA-Z0-9\u4e00-\u9fff\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF]/g);
-  return matches ? matches.length : 0;
-}
-
 const LETTER_RE = /[\p{L}]/u;
 const LETTERS_RE = /[\p{L}\p{M}]/gu;
 const UNSPACED_SCRIPT_RE =
@@ -640,28 +623,22 @@ interface TextSegmenter {
 
 type SegmenterConstructor = new (
   locales?: string | string[],
-  options?: { granularity: 'word' | 'sentence' },
+  options?: { granularity: 'word' },
 ) => TextSegmenter;
 
-function createTextSegmenter(granularity: 'word' | 'sentence'): TextSegmenter | null {
+function createWordSegmenter(): TextSegmenter | null {
   if (typeof Intl === 'undefined') return null;
   const segmenter = (Intl as typeof Intl & { Segmenter?: SegmenterConstructor }).Segmenter;
   if (!segmenter) return null;
   try {
-    return new segmenter(undefined, { granularity });
+    return new segmenter(undefined, { granularity: 'word' });
   } catch {
     return null;
   }
 }
 
-function splitContentSentences(text: string): string[] {
-  const segmenter = createTextSegmenter('sentence');
-  if (segmenter) return Array.from(segmenter.segment(text), ({ segment }) => segment);
-  return text.split(/[.!?。！？;；\n\r]+/u);
-}
-
 function countMeaningfulWords(text: string): number {
-  const segmenter = createTextSegmenter('word');
+  const segmenter = createWordSegmenter();
   if (segmenter) {
     let count = 0;
     for (const part of segmenter.segment(text)) {
@@ -679,13 +656,6 @@ function countMeaningfulWords(text: string): number {
   return scriptCharacters + ordinaryWords;
 }
 
-function hasAtLeastThreeWordsPerSentence(text: string): boolean {
-  const sentences = splitContentSentences(text)
-    .map((sentence) => sentence.trim())
-    .filter(Boolean);
-  return sentences.length > 0 && sentences.every((sentence) => countMeaningfulWords(sentence) >= 3);
-}
-
 /**
  * Detect source-like values which can appear in ordinary elements (for
  * example a release hash rendered in a badge). Code/pre are excluded by the
@@ -696,6 +666,12 @@ export function isPureCodeContent(text: string): boolean {
   if (!text || typeof text !== 'string') return false;
   const value = text.replace(/\s+/gu, ' ').trim();
   if (!value) return false;
+
+  // Real listings live in pre/code. This helper only catches short identifier-
+  // like values in ordinary elements. Long prose is never "pure code", even
+  // when it embeds a formula, citation, or equals sign — Wikipedia science
+  // paragraphs routinely contain LaTeX `{...}` and `=` and must still translate.
+  if (countMeaningfulWords(value) >= 8) return false;
 
   // URLs, email addresses, markup, paths, UUIDs and long hexadecimal hashes
   // are identifiers rather than prose.
@@ -783,9 +759,9 @@ export function isPureCodeContent(text: string): boolean {
 
 /**
  * Cheap, conservative gate used before a request is queued. It filters
- * content with fewer than three meaningful words per sentence, one/two-letter
- * labels, symbols, identifiers, code, and values for which a translation
- * cannot add useful information.
+ * one/two-letter labels, symbols, identifiers, code, and values for which
+ * a translation cannot add useful information. Length is not a reason to
+ * skip: a Wikipedia paragraph of any size remains eligible.
  */
 export function shouldTranslateContent(text: string): boolean {
   if (!text || typeof text !== 'string') return false;
@@ -799,7 +775,11 @@ export function shouldTranslateContent(text: string): boolean {
   // state, abbreviation, or name. Longer prose and CJK phrases remain valid.
   const words = value.split(/\s+/u).filter(Boolean);
   if (words.length === 1 && letters <= 2) return false;
-  return hasAtLeastThreeWordsPerSentence(value);
+
+  // Require three meaningful words in the unit as a whole. A per-sentence
+  // minimum previously rejected Wikipedia paragraphs because citation markers
+  // such as "[8][9]" were treated as sentences and vetoed the entire block.
+  return countMeaningfulWords(value) >= 3;
 }
 
 function isUserIdentifier(text: string): boolean {
@@ -807,7 +787,14 @@ function isUserIdentifier(text: string): boolean {
   if (!trimmed) return false;
   if (/^@\w+/.test(trimmed) || /^u\/\w+/.test(trimmed)) return true;
   if (/^id@https?:\/\/(x\.com|twitter\.com)\/[\w-]+\/status\/[0-9]+/.test(trimmed)) return true;
-  if (/关注.*\w+/.test(trimmed) || /Follow.*\w+/.test(trimmed)) return true;
+  // Twitter/Weibo follow-row chrome is short ("Follow @name", "关注用户").
+  // Do not match ordinary prose such as Wikipedia "Following the …" / "Followed by …".
+  if (
+    trimmed.length < 50 &&
+    (/^关注/.test(trimmed) || /^Follow\b/i.test(trimmed))
+  ) {
+    return true;
+  }
   if (/^(?=.*[0-9_])[A-Za-z0-9_]{1,15}$/.test(trimmed)) return true;
   if (/点击.*\w+/.test(trimmed) && trimmed.length < 50) return true;
   return false;
