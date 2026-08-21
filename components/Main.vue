@@ -520,13 +520,19 @@
                   />
                 </div>
                 <div class="role-config mt-2">
-                  <div class="role-label">User Role ({{ '{to}' }}, {{ '{origin}' }})</div>
+                  <div class="role-label">
+                    User Role (<code v-pre>{{to}}</code>, <code v-pre>{{origin}}</code>)
+                  </div>
                   <el-input
                     type="textarea"
                     :rows="2"
                     v-model="config.user_role[config.service]"
                     placeholder="User Prompt Template"
                   />
+                  <div v-if="duplicatePromptTags.length" class="prompt-tag-warning mt-1">
+                    <el-icon><Warning /></el-icon>
+                    <span>{{ duplicatePromptTagWarning }}</span>
+                  </div>
                 </div>
                 <div class="text-right mt-2">
                   <el-button link type="primary" size="small" @click="resetTemplate">
@@ -587,7 +593,7 @@
 
 <script lang="ts" setup>
 // Main 处理配置信息
-import { computed, ref, watch, onUnmounted } from 'vue';
+import { computed, ref, watch, onUnmounted, nextTick } from 'vue';
 import { models, options, servicesType, defaultOption } from '../entrypoints/utils/option';
 import { Config } from '@/entrypoints/utils/model';
 import { storage } from '@wxt-dev/storage';
@@ -600,6 +606,7 @@ import {
   SwitchButton,
   InfoFilled,
   Setting,
+  Warning,
 } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox, ElInputNumber } from 'element-plus';
 import browser from 'webextension-polyfill';
@@ -624,16 +631,36 @@ function updateTheme(theme: string) {
 
 // 配置信息
 let config = ref(new Config());
+// 忽略从 storage 加载配置时的变更，避免打开面板就误报“配置已更改”
+const configReady = ref(false);
+const needRefreshKeys = ['display', 'style', 'service', 'to', 'maxConcurrentTranslations'];
+let loadedRefreshFingerprint = '';
+
+function configRefreshFingerprint(cfg: any) {
+  return JSON.stringify(needRefreshKeys.map((key) => cfg?.[key]));
+}
 
 // 从 storage 中获取本地配置
-storage.getItem('local:config').then((value: any) => {
-  if (typeof value === 'string' && value) {
-    const parsedConfig = JSON.parse(value);
-    Object.assign(config.value, parsedConfig);
-  }
-  // 初始应用主题
-  updateTheme(config.value.theme || 'auto');
-});
+storage
+  .getItem('local:config')
+  .then((value: any) => {
+    if (typeof value === 'string' && value) {
+      try {
+        const parsedConfig = JSON.parse(value);
+        Object.assign(config.value, parsedConfig);
+      } catch (error) {
+        console.error('Failed to parse config:', error);
+      }
+    }
+    // 初始应用主题
+    updateTheme(config.value.theme || 'auto');
+  })
+  .finally(() => {
+    nextTick(() => {
+      loadedRefreshFingerprint = configRefreshFingerprint(config.value);
+      configReady.value = true;
+    });
+  });
 
 // 监听 storage 中 'local:config' 的变化
 storage.watch('local:config', (newValue: any, oldValue: any) => {
@@ -645,15 +672,13 @@ storage.watch('local:config', (newValue: any, oldValue: any) => {
 // 监听菜单栏配置变化
 watch(
   () => JSON.parse(JSON.stringify(config.value)),
-  (newValue: any, oldValue: any) => {
+  (newValue: any) => {
+    if (!configReady.value) return;
+
     storage.setItem('local:config', JSON.stringify(newValue));
 
-    if (oldValue && oldValue.on !== undefined) {
-      const needRefreshKeys = ['display', 'style', 'service', 'to', 'maxConcurrentTranslations'];
-      const changed = needRefreshKeys.some((key) => newValue[key] !== oldValue[key]);
-      if (changed) {
-        showRefreshTip.value = true;
-      }
+    if (configRefreshFingerprint(newValue) !== loadedRefreshFingerprint) {
+      showRefreshTip.value = true;
     }
   },
   { deep: true },
@@ -699,6 +724,23 @@ const styleGroups = computed(() => {
     ...group,
     options: options.styles.filter((item) => !item.disabled && item.group === group.value),
   }));
+});
+
+const PROMPT_REPLACE_TAGS = ['{{to}}', '{{origin}}'] as const;
+
+function countPromptReplaceTag(template: string, tag: string): number {
+  if (!template) return 0;
+  return template.split(tag).length - 1;
+}
+
+const duplicatePromptTags = computed(() => {
+  const template = config.value.user_role[config.value.service] || '';
+  return PROMPT_REPLACE_TAGS.filter((tag) => countPromptReplaceTag(template, tag) > 1);
+});
+
+const duplicatePromptTagWarning = computed(() => {
+  const tags = duplicatePromptTags.value.join('、');
+  return `${tags} 在 User Role 中出现了多次，仅第一次会被替换为实际内容`;
 });
 
 const resetTemplate = () => {
@@ -886,6 +928,7 @@ const getCustomMouseHotkeyDisplayName = () => {
 };
 
 const handleConcurrentChange = (currentValue: number | undefined, oldValue: number | undefined) => {
+  if (!configReady.value) return;
   if (currentValue === undefined || currentValue < 1 || currentValue > 100) {
     ElMessage({
       message: '并发数量必须在 1-100 之间',
@@ -1044,6 +1087,32 @@ const validateConfig = (configData: any): boolean => {
   font-weight: 600;
   margin-bottom: 4px;
   color: var(--fr-text-secondary);
+}
+
+.role-label code {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--fr-card-bg);
+}
+
+.prompt-tag-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--el-color-warning);
+  background: var(--el-color-warning-light-9);
+  border: 1px solid var(--el-color-warning-light-7);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
+.prompt-tag-warning .el-icon {
+  margin-top: 1px;
+  flex-shrink: 0;
 }
 
 .config-actions {
