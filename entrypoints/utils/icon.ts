@@ -78,6 +78,11 @@ function handleErrorClick(errMsg: string) {
 
 // 根据错误信息返回错误提示
 function getErrorMessage(errMsg: string): string {
+  // Cloudflare pages include phrases like "A timeout occurred"; keep the parsed
+  // Ray ID / error code instead of collapsing them into the generic timeout tip.
+  if (/Cloudflare/i.test(errMsg)) {
+    return errMsg.replace(/^Error:\s*/, '');
+  }
   if (errMsg.includes('auth failed') || errMsg.includes('API key')) {
     return 'Token 似乎有点问题，请前往设置页面重新配置后再试。';
   } else if (errMsg.includes('quota') || errMsg.includes('limit')) {

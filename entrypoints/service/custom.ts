@@ -3,6 +3,7 @@ import { method } from '../utils/constant';
 import { services } from '@/entrypoints/utils/option';
 import { config } from '@/entrypoints/utils/config';
 import { contentPostHandler } from '@/entrypoints/utils/check';
+import { cloudflareFailureMessage } from '@/entrypoints/utils/cloudflareError';
 
 async function custom(message: any) {
   let headers = new Headers();
@@ -31,8 +32,9 @@ async function custom(message: any) {
   });
 
   if (!resp.ok) {
+    const body = await resp.text();
     console.log('翻译失败：', resp);
-    throw new Error(`翻译失败: ${resp.status} ${resp.statusText} body: ${await resp.text()}`);
+    throw failedResponseError(resp, body);
   }
 
   // Streaming mode: parse SSE chunks and send via port
@@ -46,6 +48,7 @@ async function custom(message: any) {
   // Detect and handle SSE responses gracefully.
   const contentType = resp.headers.get('content-type') || '';
   const responseText = await resp.text();
+  throwIfCloudflareErrorPage(responseText, resp);
 
   // Check if the response is SSE (text/event-stream) or starts with "data: "
   if (contentType.includes('text/event-stream') || responseText.trimStart().startsWith('data: ')) {
@@ -55,6 +58,18 @@ async function custom(message: any) {
   // Normal JSON response
   let result = JSON.parse(responseText);
   return contentPostHandler(result.choices[0].message.content);
+}
+
+function failedResponseError(resp: Response, body: string): Error {
+  return new Error(
+    cloudflareFailureMessage(body, resp.headers, resp.status) ??
+      `翻译失败: ${resp.status} ${resp.statusText} body: ${body}`,
+  );
+}
+
+function throwIfCloudflareErrorPage(body: string, resp: Response): void {
+  const message = cloudflareFailureMessage(body, resp.headers, resp.status);
+  if (message) throw new Error(message);
 }
 
 /**
@@ -95,6 +110,17 @@ function parseSSEText(text: string): string {
  * Returns the full accumulated translated text.
  */
 async function parseStreamResponse(resp: Response, port: any): Promise<string> {
+  const contentType = resp.headers.get('content-type') || '';
+  if (
+    contentType.includes('text/html') ||
+    resp.headers.get('cf-error-type') ||
+    resp.headers.get('cf-mitigated')
+  ) {
+    const body = await resp.text();
+    throwIfCloudflareErrorPage(body, resp);
+    throw new Error('翻译失败: 流式响应未返回有效内容');
+  }
+
   const reader = resp.body?.getReader();
   if (!reader) {
     throw new Error('翻译失败: 无法获取响应流');
@@ -103,12 +129,22 @@ async function parseStreamResponse(resp: Response, port: any): Promise<string> {
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
   let result = '';
+  // Keep enough of the raw body to recognize a Cloudflare error page if the
+  // stream never yields SSE deltas (wrong content-type, or CF HTML mid-flight).
+  let rawPrefix = '';
+  const rawPrefixLimit = 48 * 1024;
+  const appendRaw = (chunk: string) => {
+    if (rawPrefix.length >= rawPrefixLimit) return;
+    rawPrefix += chunk.slice(0, rawPrefixLimit - rawPrefix.length);
+  };
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
+    const chunk = decoder.decode(value, { stream: true });
+    appendRaw(chunk);
+    buffer += chunk;
 
     // Process complete SSE lines
     const lines = buffer.split('\n');
@@ -123,8 +159,8 @@ async function parseStreamResponse(resp: Response, port: any): Promise<string> {
       if (trimmed.startsWith('data: ')) {
         const jsonStr = trimmed.slice(6);
         try {
-          const chunk = JSON.parse(jsonStr);
-          const delta = chunk.choices?.[0]?.delta?.content;
+          const chunkJson = JSON.parse(jsonStr);
+          const delta = chunkJson.choices?.[0]?.delta?.content;
           if (delta) {
             result += delta;
             // Send each chunk to content script in real-time
@@ -144,7 +180,10 @@ async function parseStreamResponse(resp: Response, port: any): Promise<string> {
     }
   }
 
+  appendRaw(decoder.decode());
+
   if (!result) {
+    throwIfCloudflareErrorPage(rawPrefix, resp);
     throw new Error('翻译失败: 流式响应未返回有效内容');
   }
 

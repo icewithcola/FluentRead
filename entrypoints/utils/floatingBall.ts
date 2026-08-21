@@ -8,6 +8,88 @@ import { autoTranslateEnglishPage, restoreOriginalContent } from '@/entrypoints/
 let floatingBallInstance: any = null;
 let app: any = null;
 let isTranslated = false; // 添加状态变量跟踪翻译状态
+let persistenceInitialized = false;
+let hostObserver: MutationObserver | null = null;
+
+const FLOATING_BALL_CONTAINER_ID = 'fluent-read-floating-ball-container';
+
+function getFloatingBallContainer(): HTMLElement | null {
+  return document.getElementById(FLOATING_BALL_CONTAINER_ID);
+}
+
+function isFloatingBallConnected(): boolean {
+  return getFloatingBallContainer()?.isConnected === true;
+}
+
+function getMountParent(): HTMLElement | null {
+  return document.body ?? document.documentElement ?? null;
+}
+
+/**
+ * 清理 Vue 实例和残留容器。SPA 换页或往返缓存恢复时，宿主节点可能已经不在文档里。
+ */
+function resetFloatingBallState(): void {
+  document.removeEventListener('fluentread-toggle-translation', toggleFloatingBallTranslation);
+
+  if (app) {
+    try {
+      app.unmount();
+    } catch {
+      // 宿主节点可能已经被页面替换掉
+    }
+  }
+
+  app = null;
+  floatingBallInstance = null;
+  isTranslated = false;
+  getFloatingBallContainer()?.remove();
+}
+
+function observeMountHosts(): void {
+  if (!hostObserver) return;
+  hostObserver.disconnect();
+  if (document.documentElement) {
+    hostObserver.observe(document.documentElement, { childList: true });
+  }
+  if (document.body) {
+    hostObserver.observe(document.body, { childList: true });
+  }
+}
+
+/**
+ * 浏览器后退/前进不会重新执行 content script。
+ * 往返缓存恢复、以及 SPA 替换 body 时，都需要把悬浮球重新挂回去。
+ */
+export function setupFloatingBallPersistence(): void {
+  if (persistenceInitialized) return;
+  persistenceInitialized = true;
+
+  const restore = () => {
+    if (config.on === false || config.disableFloatingBall) return;
+    ensureFloatingBall();
+    observeMountHosts();
+  };
+
+  window.addEventListener('pageshow', restore);
+  window.addEventListener('popstate', restore);
+
+  hostObserver = new MutationObserver(() => {
+    if (config.on === false || config.disableFloatingBall) return;
+    if (isFloatingBallConnected()) return;
+    ensureFloatingBall();
+    observeMountHosts();
+  });
+  observeMountHosts();
+}
+
+/**
+ * 若实例已失效（容器被页面摘掉），重新挂载悬浮球。
+ */
+export function ensureFloatingBall(): void {
+  if (config.disableFloatingBall) return;
+  if (floatingBallInstance && isFloatingBallConnected()) return;
+  mountFloatingBall();
+}
 
 /**
  * 创建并挂载悬浮球
@@ -15,10 +97,21 @@ let isTranslated = false; // 添加状态变量跟踪翻译状态
  * @returns
  */
 export function mountFloatingBall(position?: 'left' | 'right') {
-  // 如果配置禁用了悬浮球或已存在实例，则不创建
-  if (config.disableFloatingBall || floatingBallInstance) {
+  // 如果配置禁用了悬浮球或已存在仍挂在文档上的实例，则不创建
+  if (config.disableFloatingBall) {
     return;
   }
+  if (floatingBallInstance && isFloatingBallConnected()) {
+    return;
+  }
+
+  // SPA / bfcache 可能已经摘掉容器，但模块里还留着失效实例
+  if (floatingBallInstance || app || getFloatingBallContainer()) {
+    resetFloatingBallState();
+  }
+
+  const parent = getMountParent();
+  if (!parent) return;
 
   // 使用传入的位置参数或配置中的位置
   const ballPosition = position || config.floatingBallPosition || 'right';
@@ -27,8 +120,8 @@ export function mountFloatingBall(position?: 'left' | 'right') {
 
   // 创建容器元素
   const container = document.createElement('div');
-  container.id = 'fluent-read-floating-ball-container';
-  document.body.appendChild(container);
+  container.id = FLOATING_BALL_CONTAINER_ID;
+  parent.appendChild(container);
 
   // 创建 Vue 应用实例
   app = createApp(FloatingBall, {
@@ -197,23 +290,7 @@ function saveConfig() {
  * 卸载悬浮球
  */
 export function unmountFloatingBall() {
-  if (floatingBallInstance && app) {
-    // 移除事件监听
-    document.removeEventListener('fluentread-toggle-translation', toggleFloatingBallTranslation);
-
-    // 获取容器
-    const container = document.getElementById('fluent-read-floating-ball-container');
-
-    // 卸载 Vue 应用
-    app.unmount();
-    floatingBallInstance = null;
-    app = null;
-
-    // 移除容器
-    if (container) {
-      container.remove();
-    }
-  }
+  resetFloatingBallState();
 }
 
 /**

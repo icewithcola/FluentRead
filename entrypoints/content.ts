@@ -7,7 +7,7 @@ import { config, configReady } from '@/entrypoints/utils/config';
 import {
   mountFloatingBall,
   unmountFloatingBall,
-  toggleFloatingBallPosition,
+  setupFloatingBallPersistence,
 } from '@/entrypoints/utils/floatingBall';
 import {
   mountSelectionTranslator,
@@ -58,6 +58,8 @@ export default defineContentScript({
       // 使用配置中的位置
       mountFloatingBall();
     }
+    // Back/SPA 导航不会重新执行 content script，需要自行恢复悬浮球
+    setupFloatingBallPersistence();
 
     // 挂载划词翻译组件（如果配置未禁用）
     if (config.disableSelectionTranslator !== true) {
@@ -86,6 +88,7 @@ export default defineContentScript({
     // 处理悬浮球控制消息
     browser.runtime.onMessage.addListener((message: any, sender: any, sendResponse: () => void) => {
       if (message.type === 'toggleFloatingBall') {
+        config.disableFloatingBall = !message.isEnabled;
         if (message.isEnabled) {
           mountFloatingBall();
         } else {
@@ -143,14 +146,11 @@ export default defineContentScript({
       },
     );
 
-    // 在页面卸载时清理资源
-    window.addEventListener('beforeunload', () => {
-      // 取消所有待处理的翻译任务
+    // 真正离开页面时取消进行中的翻译。不要在这里卸载 UI：
+    // 后退若命中往返缓存，content script 不会重跑，beforeunload 里卸悬浮球会导致它消失。
+    window.addEventListener('pagehide', (event: PageTransitionEvent) => {
+      if (event.persisted) return;
       cancelAllTranslations();
-      // 移除悬浮球
-      unmountFloatingBall();
-      // 移除划词翻译组件
-      unmountSelectionTranslator();
     });
   },
 });
