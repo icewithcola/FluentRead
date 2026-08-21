@@ -29,8 +29,18 @@ jobs:
     steps:
       - name: Install CI tools
         run: |
+          export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y --no-install-recommends git zip gh
+          # git's HTTPS fetch needs a trust store. ca-certificates is only a
+          # Suggests of git, so --no-install-recommends skips it and checkout
+          # fails with "Problem with the SSL CA cert".
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            openssl \
+            git \
+            zip \
+            gh
+          update-ca-certificates
 
       - name: Check out tagged source
         uses: actions/checkout@v6
