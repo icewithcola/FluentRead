@@ -2,8 +2,8 @@
  * Translation transport facade.
  *
  * Requests are queued, time-limited, retryable, and cancellable. The queue's
- * AbortSignal is threaded through both ordinary runtime messages and stream
- * ports so a restore/session change cannot leave transports alive forever.
+ * AbortSignal disconnects the runtime Port so background fetch() calls abort
+ * when the user restores the page or stops translation.
  */
 
 import { enqueueTranslation, clearTranslationQueue, getQueueStatus, TranslationCancelledError } from './translateQueue';
@@ -22,8 +22,16 @@ function throwIfAborted(signal: AbortSignal): void {
   }
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
 function isCancelled(signal: AbortSignal, error: unknown): boolean {
-  return signal.aborted || error instanceof TranslationCancelledError;
+  return signal.aborted || error instanceof TranslationCancelledError || isAbortError(error);
+}
+
+function cancelledError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new TranslationCancelledError();
 }
 
 function wait(delay: number, signal: AbortSignal): Promise<void> {
@@ -44,28 +52,95 @@ function wait(delay: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-async function withTimeout<T>(
-  request: Promise<T> | PromiseLike<T>,
-  timeout: number,
+const TRANSLATE_PORT = 'stream-translate';
+
+/** Runtime Port used for both streaming and non-streaming translation. Disconnect aborts fetch(). */
+function requestViaPort(
+  payload: { context: string; origin: string; pageSummary?: string },
   signal: AbortSignal,
-  timeoutMessage: string,
-): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  let abortListener: (() => void) | undefined;
-  try {
-    return await new Promise<T>((resolve, reject) => {
-      timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), timeout);
-      abortListener = () => {
-        reject(signal.reason instanceof Error ? signal.reason : new TranslationCancelledError());
-      };
-      signal.addEventListener('abort', abortListener, { once: true });
-      Promise.resolve(request).then(resolve, reject);
-      if (signal.aborted) abortListener();
-    });
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-    if (abortListener) signal.removeEventListener('abort', abortListener);
-  }
+  timeout: number,
+  labels: { timeout: string; disconnect: string; failure: string; invalid: string },
+  onChunk?: (accumulated: string) => void,
+): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    let port: browser.Runtime.Port | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+
+    const cleanup = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      signal.removeEventListener('abort', onAbort);
+      try {
+        port?.onMessage.removeListener(onMessage);
+        port?.onDisconnect.removeListener(onDisconnect);
+      } catch {
+        // Port may already be gone.
+      }
+    };
+
+    const settle = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      try {
+        port?.disconnect();
+      } catch {
+        // The browser may already have disconnected the port.
+      }
+      action();
+    };
+
+    const onAbort = () => settle(() => reject(cancelledError(signal)));
+
+    const onMessage = (message: any) => {
+      if (message?.type === 'stream-chunk') {
+        if (!onChunk) return;
+        try {
+          onChunk(message.accumulated);
+        } catch (error) {
+          settle(() => reject(error));
+        }
+        return;
+      }
+
+      if (message?.type === 'stream-error') {
+        settle(() => reject(new Error(message.error || labels.failure)));
+        return;
+      }
+
+      if (message?.type !== 'stream-done') return;
+      const result = message.result;
+      if (result && typeof result === 'object') {
+        const response = result as any;
+        if (response.success === false || response.error) {
+          settle(() => reject(new Error(response.error || labels.failure)));
+          return;
+        }
+      }
+      if (typeof result !== 'string' || result.includes('[object Object]')) {
+        settle(() => reject(new Error(labels.invalid)));
+        return;
+      }
+      settle(() => resolve(result || ''));
+    };
+
+    const onDisconnect = () => {
+      if (settled) return;
+      settle(() => reject(signal.aborted ? cancelledError(signal) : new Error(labels.disconnect)));
+    };
+
+    try {
+      throwIfAborted(signal);
+      port = browser.runtime.connect({ name: TRANSLATE_PORT });
+      port.onMessage.addListener(onMessage);
+      port.onDisconnect.addListener(onDisconnect);
+      signal.addEventListener('abort', onAbort, { once: true });
+      timeoutId = setTimeout(() => settle(() => reject(new Error(labels.timeout))), timeout);
+      port.postMessage(payload);
+    } catch (error) {
+      settle(() => reject(error));
+    }
+  });
 }
 
 function incrementTranslationCount(): void {
@@ -102,30 +177,20 @@ export async function translateText(
 
   return enqueueTranslation(async (signal) => {
     throwIfAborted(signal);
-    incrementTranslationCount();
 
     const attempt = async (retryCount: number): Promise<string> => {
       throwIfAborted(signal);
       try {
         const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
-        const result = await withTimeout(
-          browser.runtime.sendMessage({ context, origin, pageSummary }),
-          timeout,
-          signal,
-          '翻译请求超时',
-        );
-
-        if (result && typeof result === 'object') {
-          const response = result as any;
-          if (response.success === false || response.error) {
-            throw new Error(response.error || '翻译失败');
-          }
-        }
-        if (typeof result !== 'string' || result.includes('[object Object]')) {
-          throw new Error('翻译返回了无效的响应格式');
-        }
+        const result = await requestViaPort({ context, origin, pageSummary }, signal, timeout, {
+          timeout: '翻译请求超时',
+          disconnect: '翻译连接意外断开',
+          failure: '翻译失败',
+          invalid: '翻译返回了无效的响应格式',
+        });
         if (!result || result === origin) return '';
 
+        incrementTranslationCount();
         if (useCache) cache.localSet(origin, result);
         return result;
       } catch (error) {
@@ -176,96 +241,25 @@ export async function translateTextStream(
     if (cachedResult) return cachedResult;
   }
 
-  return enqueueTranslation(
-    (signal) =>
-      new Promise<string>((resolve, reject) => {
-        let port: browser.Runtime.Port;
-        let timeoutId: ReturnType<typeof setTimeout> | undefined;
-        let settled = false;
-
-        const cleanup = () => {
-          if (timeoutId) clearTimeout(timeoutId);
-          signal.removeEventListener('abort', onAbort);
-          port?.onMessage.removeListener(onMessage);
-          port?.onDisconnect.removeListener(onDisconnect);
-        };
-
-        const safeResolve = (value: string) => {
-          if (settled) return;
-          settled = true;
-          cleanup();
-          try {
-            port?.disconnect();
-          } catch {
-            // The browser may already have disconnected the port.
-          }
-          resolve(value);
-        };
-
-        const safeReject = (error: unknown) => {
-          if (settled) return;
-          settled = true;
-          cleanup();
-          try {
-            port?.disconnect();
-          } catch {
-            // Ignore a duplicate disconnect during teardown.
-          }
-          reject(error);
-        };
-
-        const onAbort = () =>
-          safeReject(signal.reason instanceof Error ? signal.reason : new TranslationCancelledError());
-
-        const onMessage = (message: any) => {
-          if (message?.type === 'stream-chunk') {
-            try {
-              onChunk(message.accumulated);
-            } catch (error) {
-              safeReject(error);
-            }
-            return;
-          }
-
-          if (message?.type === 'stream-error') {
-            safeReject(new Error(message.error || '流式翻译失败'));
-            return;
-          }
-
-          if (message?.type !== 'stream-done') return;
-          const result = message.result;
-          if (result && typeof result === 'object') {
-            const response = result as any;
-            if (response.success === false || response.error) {
-              safeReject(new Error(response.error || '流式翻译失败'));
-              return;
-            }
-          }
-          if (typeof result !== 'string' || result.includes('[object Object]')) {
-            safeReject(new Error('流式翻译返回了无效的响应格式'));
-            return;
-          }
-          if (result && useCache) cache.localSet(origin, result);
-          safeResolve(result || '');
-        };
-
-        const onDisconnect = () => {
-          if (!settled) safeReject(new Error('流式翻译连接意外断开'));
-        };
-
-        try {
-          throwIfAborted(signal);
-          incrementTranslationCount();
-          port = browser.runtime.connect({ name: 'stream-translate' });
-          port.onMessage.addListener(onMessage);
-          port.onDisconnect.addListener(onDisconnect);
-          signal.addEventListener('abort', onAbort, { once: true });
-          timeoutId = setTimeout(() => safeReject(new Error('流式翻译请求超时')), timeout);
-          const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
-          port.postMessage({ context, origin, pageSummary });
-        } catch (error) {
-          safeReject(error);
-        }
-      }),
-  );
+  return enqueueTranslation(async (signal) => {
+    throwIfAborted(signal);
+    const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
+    const result = await requestViaPort(
+      { context, origin, pageSummary },
+      signal,
+      timeout,
+      {
+        timeout: '流式翻译请求超时',
+        disconnect: '流式翻译连接意外断开',
+        failure: '流式翻译失败',
+        invalid: '流式翻译返回了无效的响应格式',
+      },
+      onChunk,
+    );
+    if (result) {
+      incrementTranslationCount();
+      if (useCache) cache.localSet(origin, result);
+    }
+    return result || '';
+  });
 }

@@ -1,5 +1,5 @@
 import { html } from 'js-beautify';
-import { getMainDomain, selectCompatFn } from '@/entrypoints/main/compat';
+import { getMainDomain, isSelectSkip, selectCompatFn } from '@/entrypoints/main/compat';
 
 /**
  * DOM selection and serialization primitives used by the translation layer.
@@ -494,7 +494,7 @@ function resolveCompat(element: Element): CompatResolution {
   if (!handler) return { skip: false };
 
   const result = handler(element);
-  if (result && typeof result === 'object' && result.skip === true) return { skip: true };
+  if (isSelectSkip(result)) return { skip: true };
   if (result instanceof Element && result.isConnected && isSafeElement(result)) {
     return { candidate: result, skip: false };
   }

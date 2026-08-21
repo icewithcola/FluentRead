@@ -7,6 +7,18 @@ import { method } from '@/entrypoints/utils/constant';
 // 翻译状态管理
 let translationStateMap = new Map<number, boolean>(); // tabId -> isTranslated
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+function abortOnDisconnect(port: { onDisconnect: { addListener: (cb: () => void) => void } }): AbortController {
+  const controller = new AbortController();
+  port.onDisconnect.addListener(() => {
+    if (!controller.signal.aborted) controller.abort();
+  });
+  return controller;
+}
+
 async function setupContextMenus(): Promise<void> {
   try {
     await browser.contextMenus.removeAll();
@@ -135,7 +147,8 @@ export default defineBackground({
       // Only handle translation requests (messages with 'origin' field)
       if (!message?.origin) return;
 
-      // 处理普通翻译请求
+      // Fallback for any leftover sendMessage callers; cancellable
+      // translations use the Port path below so fetch() can be aborted.
       try {
         return _service[config.service](message);
       } catch (error) {
@@ -143,22 +156,29 @@ export default defineBackground({
       }
     });
 
-    // Handle streaming translation requests via Port connection
+    // Handle translation requests via Port so disconnect can abort fetch().
     browser.runtime.onConnect.addListener((port: any) => {
       if (port.name !== 'stream-translate') return;
+
+      const controller = abortOnDisconnect(port);
 
       port.onMessage.addListener(async (message: any) => {
         try {
           // Attach port to message so custom() can send chunks
           message._port = port;
-          const result = await _service[config.service](message);
-          // Send final complete result
+          const result = await _service[config.service](message, controller.signal);
+          if (controller.signal.aborted) return;
           port.postMessage({ type: 'stream-done', result });
         } catch (error) {
-          port.postMessage({
-            type: 'stream-error',
-            error: error instanceof Error ? error.message : String(error),
-          });
+          if (controller.signal.aborted || isAbortError(error)) return;
+          try {
+            port.postMessage({
+              type: 'stream-error',
+              error: error instanceof Error ? error.message : String(error),
+            });
+          } catch {
+            // Port already disconnected.
+          }
         }
       });
     });

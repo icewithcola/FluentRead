@@ -3,7 +3,7 @@ import custom from './custom';
 import google from './google';
 import chromeTranslator from './chrome-translator';
 
-type ServiceFunction = (message: any) => Promise<any>;
+type ServiceFunction = (message: any, signal?: AbortSignal) => Promise<any>;
 type ServiceMap = { [key: string]: ServiceFunction };
 
 export const _service: ServiceMap = {

@@ -44,14 +44,6 @@ export const cache = {
     setPageStorageItem(buildKey(key), value);
   },
 
-  localSetDual(key: string, value: string) {
-    // 如果禁用缓存，则不执行任何操作
-    if (!config.useCache) return;
-
-    this.localSet(value, key);
-    this.localSet(key, value);
-  },
-
   localGet(origin: string) {
     // 如果禁用缓存，则始终返回 null
     if (!config.useCache) return null;

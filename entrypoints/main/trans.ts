@@ -402,7 +402,7 @@ function applyTranslatedHTML(context: TranslationContext, translated: string): b
   if (replace && matchingOuter) replace(element, text);
   else element.innerHTML = matchingOuter ? parsed.firstElementChild!.innerHTML : text;
   context.lastOwnedHTML = element.innerHTML;
-  cache.localSetDual(context.sourceOuterHTML, element.outerHTML);
+  cache.localSet(context.sourceOuterHTML, element.outerHTML);
   finishTranslated(context);
   return true;
 }
@@ -777,7 +777,6 @@ export const handleBtnTranslation = throttle((node: HTMLElement) => {
     .then((text) => {
       if (generation === sessionGeneration && node.isConnected && node.innerText === origin && text) {
         node.innerText = text;
-        cache.localSetDual(origin, text);
       }
     })
     .catch((error) => console.error('调用失败:', error));

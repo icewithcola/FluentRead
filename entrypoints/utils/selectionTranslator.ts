@@ -13,6 +13,7 @@ export function mountSelectionTranslator() {
   // 如果已存在实例或配置禁用了此功能，则不创建
   if (
     selectionTranslatorInstance ||
+    config.on === false ||
     config.disableSelectionTranslator ||
     config.selectionTranslatorMode === 'disabled'
   ) {

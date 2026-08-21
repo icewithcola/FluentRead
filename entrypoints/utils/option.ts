@@ -13,14 +13,11 @@ export const servicesType = {
   useToken: new Set([services.custom]),
   // 需要 model
   useModel: new Set([services.custom]),
-  // 支持代理
-  useProxy: new Set([services.google]),
   // 支持自定义 URL 的服务
   useCustomUrl: new Set([services.custom]),
 
   isMachine: (service: string) => servicesType.machine.has(service),
   isUseToken: (service: string) => servicesType.useToken.has(service),
-  isUseProxy: (service: string) => servicesType.useProxy.has(service),
   isUseModel: (service: string) => servicesType.useModel.has(service),
   isCustom: (service: string) => service === services.custom,
   isUseCustomUrl: (service: string) => servicesType.useCustomUrl.has(service),
@@ -191,7 +188,6 @@ export const defaultOption = {
   hotkey: 'Control',
   service: services.chromeTranslator,
   custom: 'http://localhost:11434/v1/chat/completions',
-  deeplx: 'http://localhost:1188/translate',
   system_role: 'You are a professional, authentic machine translation engine.',
   user_role: `Translate the following text into {{to}}, If translation is unnecessary (e.g. proper nouns, codes, etc.), return the original text. NO explanations. NO notes:
 

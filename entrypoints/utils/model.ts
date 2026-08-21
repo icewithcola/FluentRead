@@ -25,7 +25,6 @@ export class Config {
   key: string;
   model: IMapping;
   customModel: IMapping; // 自定义模型名称
-  proxy: IMapping; // 代理地址
   custom: string; // 本地服务地址
   extra: IExtra; // 额外信息（内包信息）
   robot_id: IMapping; // 机器人 ID（兼容 coze）
@@ -40,15 +39,9 @@ export class Config {
   customFloatingBallHotkey: string; // 自定义悬浮球快捷键
   customHotkey: string; // 自定义鼠标悬浮快捷键
   disableSelectionTranslator: boolean; // 是否禁用划词翻译
-  deeplx: string; // DeepLX 服务地址
   selectionTranslatorMode: string; // 划词翻译显示模式: 'disabled' | 'bilingual' | 'translation-only'
   newApiUrl: string; // NewAPI地址
   maxConcurrentTranslations: number; // 最大并发翻译数量
-  youdaoAppKey: string; // 有道翻译 App Key
-  youdaoAppSecret: string; // 有道翻译 App Secret
-  tencentSecretId: string; // 腾讯云 Secret ID
-  tencentSecretKey: string; // 腾讯云 Secret Key
-  azureOpenaiEndpoint: string; // Azure OpenAI 端点地址
   animations: boolean; // 是否启用动画效果
   translationStatus: boolean; // 是否启用全文翻译进度面板
   useStream: boolean; // 是否启用流式传输（Streamable HTTP）
@@ -74,7 +67,6 @@ export class Config {
     this.key = '';
     this.model = {};
     this.customModel = {};
-    this.proxy = {};
     this.custom = defaultOption.custom;
     this.extra = {};
     this.robot_id = {};
@@ -89,15 +81,9 @@ export class Config {
     this.customFloatingBallHotkey = ''; // 自定义快捷键为空
     this.customHotkey = ''; // 自定义鼠标悬浮快捷键为空
     this.disableSelectionTranslator = false; // 默认不禁用划词翻译
-    this.deeplx = ''; // DeepLX 默认服务地址
     this.selectionTranslatorMode = 'bilingual'; // 默认双语显示模式
     this.newApiUrl = 'http://localhost:3000'; // NewAPI 默认地址
     this.maxConcurrentTranslations = 6; // 默认最大并发数为6
-    this.youdaoAppKey = ''; // 有道翻译 App Key
-    this.youdaoAppSecret = ''; // 有道翻译 App Secret
-    this.tencentSecretId = ''; // 腾讯云 Secret ID
-    this.tencentSecretKey = ''; // 腾讯云 Secret Key
-    this.azureOpenaiEndpoint = ''; // Azure OpenAI 端点地址
     this.animations = true; // 默认启用动画
     this.translationStatus = true; // 默认启用翻译进度面板
     this.useStream = false; // 默认关闭流式传输

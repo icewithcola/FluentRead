@@ -1,7 +1,7 @@
 import { method } from '../utils/constant';
 import { config } from '@/entrypoints/utils/config';
 
-async function google(message: any) {
+async function google(message: any, signal?: AbortSignal) {
   let params: any = {
     client: 'gtx',
     sl: config.from,
@@ -17,6 +17,7 @@ async function google(message: any) {
 
   const resp = await fetch('https://translate.googleapis.com/translate_a/single?' + queryString, {
     method: method.GET,
+    signal,
   });
 
   if (resp.ok) {

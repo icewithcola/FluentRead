@@ -33,7 +33,6 @@
             inline-prompt
             active-text="开"
             inactive-text="关"
-            @change="handlePluginStateChange"
             size="large"
           />
         </div>
@@ -472,18 +471,6 @@
                 </div>
               </div>
 
-              <!-- 代理 -->
-              <div class="setting-item" v-show="compute.showProxy">
-                <div class="setting-label">代理地址</div>
-                <div class="setting-control">
-                  <el-input
-                    v-model="config.proxy[config.service]"
-                    placeholder="无需则留空"
-                    size="small"
-                  />
-                </div>
-              </div>
-
               <!-- 调试模式 -->
               <div class="setting-item">
                 <div class="setting-label">
@@ -594,7 +581,7 @@
 <script lang="ts" setup>
 // Main 处理配置信息
 import { computed, ref, watch, onUnmounted, nextTick } from 'vue';
-import { models, options, servicesType, defaultOption } from '../entrypoints/utils/option';
+import { models, options, services, servicesType, defaultOption } from '../entrypoints/utils/option';
 import { Config } from '@/entrypoints/utils/model';
 import { storage } from '@wxt-dev/storage';
 import {
@@ -687,16 +674,14 @@ watch(
 // 计算属性
 let compute = ref({
   showMachine: computed(() => servicesType.isMachine(config.value.service)),
-  showProxy: computed(() => servicesType.isUseProxy(config.value.service)),
   showModel: computed(() => servicesType.isUseModel(config.value.service)),
   showToken: computed(() => servicesType.isUseToken(config.value.service)),
   model: computed(() => models.get(config.value.service) || []),
   showCustom: computed(() => servicesType.isCustom(config.value.service)),
-  showDeepLX: computed(() => config.value.service === 'deeplx'),
   showCustomModel: computed(() => config.value.model[config.value.service] === '自定义模型'),
   filteredServices: computed(() =>
     options.services.filter(
-      (service: any) => !([service.google].includes(service.value) && config.value.display !== 1),
+      (service: any) => !(service.value === services.google && config.value.display === 0),
     ),
   ),
 });
@@ -804,42 +789,6 @@ watch(
 
 const handleSwitchChange = () => {
   showRefreshTip.value = true;
-};
-
-const handlePluginStateChange = (val: boolean) => {
-  if (!val) {
-    if (!config.value.disableFloatingBall) {
-      config.value.disableFloatingBall = true;
-      browser.tabs.query({}).then((tabs) => {
-        tabs.forEach((tab) => {
-          if (tab.id) {
-            browser.tabs
-              .sendMessage(tab.id, {
-                type: 'toggleFloatingBall',
-                isEnabled: false,
-              })
-              .catch(() => {});
-          }
-        });
-      });
-    }
-
-    if (config.value.selectionTranslatorMode !== 'disabled') {
-      config.value.selectionTranslatorMode = 'disabled';
-      browser.tabs.query({}).then((tabs) => {
-        tabs.forEach((tab) => {
-          if (tab.id) {
-            browser.tabs
-              .sendMessage(tab.id, {
-                type: 'updateSelectionTranslatorMode',
-                mode: 'disabled',
-              })
-              .catch(() => {});
-          }
-        });
-      });
-    }
-  }
 };
 
 const showCustomHotkeyDialog = ref(false);

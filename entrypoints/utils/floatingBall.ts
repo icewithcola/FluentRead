@@ -86,7 +86,7 @@ export function setupFloatingBallPersistence(): void {
  * 若实例已失效（容器被页面摘掉），重新挂载悬浮球。
  */
 export function ensureFloatingBall(): void {
-  if (config.disableFloatingBall) return;
+  if (config.on === false || config.disableFloatingBall) return;
   if (floatingBallInstance && isFloatingBallConnected()) return;
   mountFloatingBall();
 }
@@ -97,8 +97,8 @@ export function ensureFloatingBall(): void {
  * @returns
  */
 export function mountFloatingBall(position?: 'left' | 'right') {
-  // 如果配置禁用了悬浮球或已存在仍挂在文档上的实例，则不创建
-  if (config.disableFloatingBall) {
+  // 如果插件关闭、配置禁用了悬浮球，或已存在仍挂在文档上的实例，则不创建
+  if (config.on === false || config.disableFloatingBall) {
     return;
   }
   if (floatingBallInstance && isFloatingBallConnected()) {

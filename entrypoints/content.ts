@@ -14,6 +14,7 @@ import {
   unmountSelectionTranslator,
 } from '@/entrypoints/utils/selectionTranslator';
 import { cancelAllTranslations, translateText } from '@/entrypoints/utils/translateApi';
+import { storage } from '@wxt-dev/storage';
 import { createApp } from 'vue';
 import TranslationStatus from '@/components/TranslationStatus.vue';
 
@@ -32,7 +33,7 @@ export default defineContentScript({
   runAt: 'document_end', // 在页面加载完成后运行
   async main() {
     await configReady; // 等待配置加载完成
-    if (config.on === false) return; // 如果配置关闭，则不执行任何操作
+    // 始终注册监听器。config.on 只用于开关动作，这样弹窗里再打开时无需刷新已有标签页。
     // 添加手动翻译事件监听器
     setupManualTranslationTriggers();
     // 添加悬浮球快捷键事件监听器
@@ -40,6 +41,7 @@ export default defineContentScript({
     // 当悬浮球关闭时，仍然允许使用快捷键进行全文翻译的独立开关
     let isFullPageTranslating = false;
     document.addEventListener('fluentread-toggle-translation', () => {
+      if (config.on === false) return;
       // 仅在悬浮球被禁用（未挂载）时由内容脚本接管快捷键
       if (config.disableFloatingBall === true) {
         isFullPageTranslating = !isFullPageTranslating;
@@ -51,25 +53,47 @@ export default defineContentScript({
       }
     });
     // 添加自动翻译事件监听器
-    if (config.autoTranslate) autoTranslationEvent();
+    if (config.on && config.autoTranslate) autoTranslationEvent();
 
-    // 挂载悬浮球（如果配置未禁用）
-    if (config.disableFloatingBall !== true) {
-      // 使用配置中的位置
-      mountFloatingBall();
-    }
+    syncOverlayUi();
     // Back/SPA 导航不会重新执行 content script，需要自行恢复悬浮球
     setupFloatingBallPersistence();
 
-    // 挂载划词翻译组件（如果配置未禁用）
-    if (config.disableSelectionTranslator !== true) {
-      mountSelectionTranslator();
-    }
+    let pluginEnabled = config.on !== false;
+    storage.watch('local:config', (newValue: any) => {
+      if (typeof newValue !== 'string' || !newValue.trim()) return;
+      try {
+        const parsed = JSON.parse(newValue);
+        if (
+          typeof parsed !== 'object' ||
+          parsed === null ||
+          !('on' in parsed) ||
+          !('service' in parsed) ||
+          !('from' in parsed) ||
+          !('to' in parsed)
+        ) {
+          return;
+        }
+        // 与 config.ts 的 watch 互不依赖回调顺序：先合并再同步 UI
+        Object.assign(config, parsed);
+      } catch {
+        return;
+      }
 
-    // 挂载翻译状态组件（可配置禁用）
-    if (config.translationStatus === true) {
-      mountTranslationStatusComponent();
-    }
+      const wasEnabled = pluginEnabled;
+      pluginEnabled = config.on !== false;
+
+      // 仅在开→关时恢复原文并取消队列/观察者；其它配置变更不要 restore
+      if (wasEnabled && !pluginEnabled) {
+        restoreOriginalContent();
+      }
+
+      syncOverlayUi();
+
+      if (!wasEnabled && pluginEnabled && config.autoTranslate) {
+        autoTranslationEvent();
+      }
+    });
 
     cache.cleaner(); // 检测是否清理缓存
 
@@ -89,7 +113,7 @@ export default defineContentScript({
     browser.runtime.onMessage.addListener((message: any, sender: any, sendResponse: () => void) => {
       if (message.type === 'toggleFloatingBall') {
         config.disableFloatingBall = !message.isEnabled;
-        if (message.isEnabled) {
+        if (message.isEnabled && config.on !== false) {
           mountFloatingBall();
         } else {
           unmountFloatingBall();
@@ -106,13 +130,10 @@ export default defineContentScript({
         // 更新配置
         config.selectionTranslatorMode = message.mode;
 
-        if (message.mode === 'disabled') {
+        if (message.mode === 'disabled' || config.on === false) {
           unmountSelectionTranslator();
-        } else {
-          // 如果之前没有挂载，现在挂载
-          if (!document.getElementById('fluent-read-selection-translator-container')) {
-            mountSelectionTranslator();
-          }
+        } else if (!document.getElementById('fluent-read-selection-translator-container')) {
+          mountSelectionTranslator();
         }
         sendResponse();
         return true;
@@ -673,16 +694,67 @@ function clearAllTranslations() {
   console.log('已清除所有翻译缓存');
 }
 
+const TRANSLATION_STATUS_CONTAINER_ID = 'fluent-read-translation-status-container';
+let translationStatusApp: ReturnType<typeof createApp> | null = null;
+
+function getTranslationStatusContainer(): HTMLElement | null {
+  return document.getElementById(TRANSLATION_STATUS_CONTAINER_ID);
+}
+
+/**
+ * 按当前 config 挂载或卸载悬浮球、划词翻译和进度面板。
+ * 开关关闭时卸掉 UI，打开时再挂上。
+ */
+function syncOverlayUi() {
+  if (config.on && config.disableFloatingBall !== true) {
+    mountFloatingBall();
+  } else {
+    unmountFloatingBall();
+  }
+
+  if (
+    config.on &&
+    config.disableSelectionTranslator !== true &&
+    config.selectionTranslatorMode !== 'disabled'
+  ) {
+    mountSelectionTranslator();
+  } else {
+    unmountSelectionTranslator();
+  }
+
+  if (config.on && config.translationStatus === true) {
+    mountTranslationStatusComponent();
+  } else {
+    unmountTranslationStatusComponent();
+  }
+}
+
 /**
  * 挂载翻译状态组件
  */
 function mountTranslationStatusComponent() {
-  // 创建容器元素
+  if (translationStatusApp || getTranslationStatusContainer()) return;
+  if (!document.body) return;
+
   const container = document.createElement('div');
-  container.id = 'fluent-read-translation-status-container';
+  container.id = TRANSLATION_STATUS_CONTAINER_ID;
   document.body.appendChild(container);
 
-  // 创建并挂载组件
-  const app = createApp(TranslationStatus);
-  app.mount(container);
+  translationStatusApp = createApp(TranslationStatus);
+  translationStatusApp.mount(container);
+}
+
+/**
+ * 卸载翻译状态组件
+ */
+function unmountTranslationStatusComponent() {
+  if (translationStatusApp) {
+    try {
+      translationStatusApp.unmount();
+    } catch {
+      // 宿主节点可能已经被页面替换掉
+    }
+    translationStatusApp = null;
+  }
+  getTranslationStatusContainer()?.remove();
 }

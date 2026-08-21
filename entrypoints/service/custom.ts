@@ -5,7 +5,7 @@ import { config } from '@/entrypoints/utils/config';
 import { contentPostHandler } from '@/entrypoints/utils/check';
 import { cloudflareFailureMessage } from '@/entrypoints/utils/cloudflareError';
 
-async function custom(message: any) {
+async function custom(message: any, signal?: AbortSignal) {
   let headers = new Headers();
   headers.append('Content-Type', 'application/json');
   headers.append('Authorization', `Bearer ${config.token[services.custom]}`);
@@ -29,6 +29,7 @@ async function custom(message: any) {
     method: method.POST,
     headers: headers,
     body: commonMsgTemplate(message.origin, pageSummary),
+    signal,
   });
 
   if (!resp.ok) {
@@ -39,7 +40,7 @@ async function custom(message: any) {
 
   // Streaming mode: parse SSE chunks and send via port
   if (config.useStream && message._port) {
-    return await parseStreamResponse(resp, message._port);
+    return await parseStreamResponse(resp, message._port, signal);
   }
 
   // Non-streaming mode: parse JSON response
@@ -104,12 +105,19 @@ function parseSSEText(text: string): string {
   return contentPostHandler(result);
 }
 
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : new DOMException('The user aborted a request.', 'AbortError');
+}
+
 /**
  * Parse an SSE (Server-Sent Events) streaming response from an OpenAI-compatible API.
  * Sends each content delta to the content script via Port for real-time DOM updates.
  * Returns the full accumulated translated text.
  */
-async function parseStreamResponse(resp: Response, port: any): Promise<string> {
+async function parseStreamResponse(resp: Response, port: any, signal?: AbortSignal): Promise<string> {
   const contentType = resp.headers.get('content-type') || '';
   if (
     contentType.includes('text/html') ||
@@ -126,6 +134,12 @@ async function parseStreamResponse(resp: Response, port: any): Promise<string> {
     throw new Error('翻译失败: 无法获取响应流');
   }
 
+  const onAbort = () => {
+    void reader.cancel().catch(() => undefined);
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  if (signal?.aborted) onAbort();
+
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
   let result = '';
@@ -138,56 +152,71 @@ async function parseStreamResponse(resp: Response, port: any): Promise<string> {
     rawPrefix += chunk.slice(0, rawPrefixLimit - rawPrefix.length);
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      throwIfAborted(signal);
+      const { done, value } = await reader.read();
+      throwIfAborted(signal);
+      if (done) break;
 
-    const chunk = decoder.decode(value, { stream: true });
-    appendRaw(chunk);
-    buffer += chunk;
+      const chunk = decoder.decode(value, { stream: true });
+      appendRaw(chunk);
+      buffer += chunk;
 
-    // Process complete SSE lines
-    const lines = buffer.split('\n');
-    // Keep the last potentially incomplete line in the buffer
-    buffer = lines.pop() || '';
+      // Process complete SSE lines
+      const lines = buffer.split('\n');
+      // Keep the last potentially incomplete line in the buffer
+      buffer = lines.pop() || '';
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith(':')) continue;
-      if (trimmed === 'data: [DONE]') continue;
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith(':')) continue;
+        if (trimmed === 'data: [DONE]') continue;
 
-      if (trimmed.startsWith('data: ')) {
-        const jsonStr = trimmed.slice(6);
-        try {
-          const chunkJson = JSON.parse(jsonStr);
-          const delta = chunkJson.choices?.[0]?.delta?.content;
-          if (delta) {
-            result += delta;
-            // Send each chunk to content script in real-time
-            try {
-              port.postMessage({ type: 'stream-chunk', chunk: delta, accumulated: result });
-            } catch (e) {
-              // Port may have been disconnected
-              console.warn('Port disconnected, stopping stream');
-              reader.cancel();
-              return contentPostHandler(result);
+        if (trimmed.startsWith('data: ')) {
+          const jsonStr = trimmed.slice(6);
+          try {
+            const chunkJson = JSON.parse(jsonStr);
+            const delta = chunkJson.choices?.[0]?.delta?.content;
+            if (delta) {
+              result += delta;
+              // Send each chunk to content script in real-time
+              try {
+                port.postMessage({ type: 'stream-chunk', chunk: delta, accumulated: result });
+              } catch (e) {
+                // Port may have been disconnected
+                console.warn('Port disconnected, stopping stream');
+                await reader.cancel().catch(() => undefined);
+                throwIfAborted(signal);
+                return contentPostHandler(result);
+              }
             }
+          } catch (e) {
+            if (
+              signal?.aborted ||
+              (e instanceof Error &&
+                (e.name === 'AbortError' || e.name === 'TranslationCancelledError'))
+            ) {
+              throw e;
+            }
+            console.warn('Stream chunk parse error:', e, jsonStr);
           }
-        } catch (e) {
-          console.warn('Stream chunk parse error:', e, jsonStr);
         }
       }
     }
+
+    appendRaw(decoder.decode());
+    throwIfAborted(signal);
+
+    if (!result) {
+      throwIfCloudflareErrorPage(rawPrefix, resp);
+      throw new Error('翻译失败: 流式响应未返回有效内容');
+    }
+
+    return contentPostHandler(result);
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
   }
-
-  appendRaw(decoder.decode());
-
-  if (!result) {
-    throwIfCloudflareErrorPage(rawPrefix, resp);
-    throw new Error('翻译失败: 流式响应未返回有效内容');
-  }
-
-  return contentPostHandler(result);
 }
 
 export default custom;
