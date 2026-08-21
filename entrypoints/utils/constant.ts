@@ -29,6 +29,7 @@ export const styles = {
 
 // 右键菜单ID常量
 export const CONTEXT_MENU_IDS = {
+  PARENT: 'fluentread-parent',
   TRANSLATE_FULL_PAGE: 'fluent-read-translate-full-page',
   RESTORE_ORIGINAL: 'fluent-read-restore-original',
 };

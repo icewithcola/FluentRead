@@ -7,39 +7,44 @@ import { method } from '@/entrypoints/utils/constant';
 // 翻译状态管理
 let translationStateMap = new Map<number, boolean>(); // tabId -> isTranslated
 
+async function setupContextMenus(): Promise<void> {
+  try {
+    await browser.contextMenus.removeAll();
+    await browser.contextMenus.create({
+      id: CONTEXT_MENU_IDS.PARENT,
+      title: '喵喵阅读',
+      contexts: ['page', 'selection'],
+    });
+    await browser.contextMenus.create({
+      id: CONTEXT_MENU_IDS.TRANSLATE_FULL_PAGE,
+      title: '全文翻译',
+      parentId: CONTEXT_MENU_IDS.PARENT,
+      contexts: ['page', 'selection'],
+    });
+    await browser.contextMenus.create({
+      id: CONTEXT_MENU_IDS.RESTORE_ORIGINAL,
+      title: '撤销翻译',
+      parentId: CONTEXT_MENU_IDS.PARENT,
+      contexts: ['page', 'selection'],
+      enabled: false,
+    });
+  } catch (error) {
+    console.error('Error setting up context menu:', error);
+  }
+}
+
 export default defineBackground({
   persistent: {
     safari: false,
   },
   main() {
-    // 创建右键菜单项
-    try {
-      // 创建父菜单
-      browser.contextMenus.create({
-        id: 'fluentread-parent',
-        title: '喵喵阅读',
-        contexts: ['page', 'selection'],
-      });
-
-      // 创建全文翻译子菜单
-      browser.contextMenus.create({
-        id: CONTEXT_MENU_IDS.TRANSLATE_FULL_PAGE,
-        title: '全文翻译',
-        parentId: 'fluentread-parent',
-        contexts: ['page', 'selection'],
-      });
-
-      // 创建撤销翻译子菜单
-      browser.contextMenus.create({
-        id: CONTEXT_MENU_IDS.RESTORE_ORIGINAL,
-        title: '撤销翻译',
-        parentId: 'fluentread-parent',
-        contexts: ['page', 'selection'],
-        enabled: false, // 初始状态为禁用
-      });
-    } catch (error) {
-      console.error('Error setting up context menu:', error);
-    }
+    // 右键菜单在 MV3 中会跨 service worker 重启持久化。每次唤醒都 create
+    //（例如后退导致 worker 重启）会触发 duplicate id 的 lastError。
+    // 仅在安装/更新时先 removeAll 再创建。
+    let contextMenusReady: Promise<void> = Promise.resolve();
+    browser.runtime.onInstalled.addListener(() => {
+      contextMenusReady = setupContextMenus();
+    });
 
     // 监听右键菜单点击事件
     browser.contextMenus.onClicked.addListener((info: any, tab: any) => {
@@ -79,18 +84,16 @@ export default defineBackground({
     });
 
     // 更新右键菜单状态
-    const updateContextMenus = (tabId: number) => {
+    const updateContextMenus = async (tabId: number) => {
       const isTranslated = translationStateMap.get(tabId) || false;
 
       try {
-        // 更新全文翻译菜单项
-        browser.contextMenus.update(CONTEXT_MENU_IDS.TRANSLATE_FULL_PAGE, {
+        await contextMenusReady;
+        await browser.contextMenus.update(CONTEXT_MENU_IDS.TRANSLATE_FULL_PAGE, {
           enabled: !isTranslated,
           title: isTranslated ? '全文翻译 (已翻译)' : '全文翻译',
         });
-
-        // 更新撤销翻译菜单项
-        browser.contextMenus.update(CONTEXT_MENU_IDS.RESTORE_ORIGINAL, {
+        await browser.contextMenus.update(CONTEXT_MENU_IDS.RESTORE_ORIGINAL, {
           enabled: isTranslated,
           title: isTranslated ? '撤销翻译' : '撤销翻译 (无翻译)',
         });
