@@ -30,6 +30,8 @@ stats-*.json
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+bun-debug.log*
 lerna-debug.log*
 *.log
 
@@ -78,6 +80,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+bun-debug.log*
 lerna-debug.log*
 
 stats.html

@@ -51,6 +51,33 @@ Whether you are reading papers, technical docs, or simply wandering the web, it 
 | Edge | [Edge Add-ons Store](https://microsoftedge.microsoft.com/addons/detail/%E6%B5%81%E7%95%85%E9%98%85%E8%AF%BB/kakgmllfpjldjhcnkghpplmlbnmcoflp?hl=zh-CN) |
 | Firefox | [Firefox Add-ons Store](https://addons.mozilla.org/zh-CN/firefox/addon/%E6%B5%81%E7%95%85%E9%98%85%E8%AF%BB/) |
 
+## 🛠️ Developer's workshop
+
+This repo is Bun-first. Install [Bun](https://bun.sh), then:
+
+```bash
+# Install dependencies
+bun install
+
+# Development mode (hot reload)
+bun run dev
+
+# Production build
+bun run build
+
+# Type check
+bun run compile
+
+# Debug build (no minify, with sourcemaps)
+bun run build:debug
+
+# Firefox build
+bun run build:firefox
+
+# Pack zip
+bun run zip
+```
+
 ## 📖 The catgirl handbook
 
 Want to get to know Catgirl Read better? Visit the [documentation](https://fluent.thinkstu.com/) for:
