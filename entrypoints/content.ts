@@ -1,6 +1,6 @@
 import { handleTranslation, autoTranslateEnglishPage, restoreOriginalContent } from './main/trans';
 import { cache } from './utils/cache';
-import { constants } from '@/entrypoints/utils/constant';
+import { constants, normalizeTranslationCount } from '@/entrypoints/utils/constant';
 import { getCenterPoint } from '@/entrypoints/utils/common';
 import './style.css';
 import { config, configReady } from '@/entrypoints/utils/config';
@@ -74,8 +74,11 @@ export default defineContentScript({
         ) {
           return;
         }
-        // 与 config.ts 的 watch 互不依赖回调顺序：先合并再同步 UI
+        // 与 config.ts 的 watch 互不依赖回调顺序：先合并再同步 UI。
+        // Settings snapshots can carry a stale translation count; keep the higher one.
+        const previousCount = normalizeTranslationCount(config.count);
         Object.assign(config, parsed);
+        config.count = Math.max(previousCount, normalizeTranslationCount(config.count));
       } catch {
         return;
       }

@@ -20,6 +20,7 @@ import {
   translateText,
   translateTextStream,
   cancelAllTranslations,
+  incrementTranslationCount,
 } from '@/entrypoints/utils/translateApi';
 import {
   requestPageSummary,
@@ -291,6 +292,7 @@ function invalidateContext(context: TranslationContext): void {
 function finishTranslated(context: TranslationContext): void {
   removeSpinner(context);
   context.lastOwnedHTML = context.element.innerHTML;
+  incrementTranslationCount();
   if (context.record) {
     context.record.lastOwnedHTML = context.lastOwnedHTML;
     setRecordStatus(context.record, 'translated');
@@ -777,6 +779,7 @@ export const handleBtnTranslation = throttle((node: HTMLElement) => {
     .then((text) => {
       if (generation === sessionGeneration && node.isConnected && node.innerText === origin && text) {
         node.innerText = text;
+        incrementTranslationCount();
       }
     })
     .catch((error) => console.error('调用失败:', error));

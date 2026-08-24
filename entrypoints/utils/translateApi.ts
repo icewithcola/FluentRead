@@ -13,6 +13,7 @@ import { cache } from './cache';
 import { detectlang } from './common';
 import { storage } from '@wxt-dev/storage';
 import { getCurrentPageSummary } from './pageSummary';
+import { TRANSLATION_COUNT_KEY, normalizeTranslationCount } from './constant';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -143,11 +144,35 @@ function requestViaPort(
   });
 }
 
-function incrementTranslationCount(): void {
-  config.count++;
-  // Persistence is best effort; a storage failure must not turn a successful
-  // translation into a failed DOM update.
-  void Promise.resolve(storage.setItem('local:config', JSON.stringify(config))).catch(() => undefined);
+let pendingCountIncrements = 0;
+let persistingCount = false;
+
+/** Count one successfully applied translation. Writes a dedicated key so settings saves cannot clobber it. */
+export function incrementTranslationCount(): void {
+  config.count = normalizeTranslationCount(config.count) + 1;
+  pendingCountIncrements++;
+  void flushTranslationCount();
+}
+
+async function flushTranslationCount(): Promise<void> {
+  if (persistingCount) return;
+  persistingCount = true;
+  try {
+    while (pendingCountIncrements > 0) {
+      const batch = pendingCountIncrements;
+      pendingCountIncrements = 0;
+      const stored = await storage.getItem(TRANSLATION_COUNT_KEY);
+      const next = normalizeTranslationCount(stored) + batch;
+      config.count = Math.max(normalizeTranslationCount(config.count), next);
+      await storage.setItem(TRANSLATION_COUNT_KEY, next);
+    }
+  } catch {
+    // Persistence is best effort; a storage failure must not turn a successful
+    // translation into a failed DOM update.
+  } finally {
+    persistingCount = false;
+    if (pendingCountIncrements > 0) void flushTranslationCount();
+  }
 }
 
 /** Unified non-streaming translation entry point. */
@@ -190,7 +215,6 @@ export async function translateText(
         });
         if (!result || result === origin) return '';
 
-        incrementTranslationCount();
         if (useCache) cache.localSet(origin, result);
         return result;
       } catch (error) {
@@ -256,10 +280,7 @@ export async function translateTextStream(
       },
       onChunk,
     );
-    if (result) {
-      incrementTranslationCount();
-      if (useCache) cache.localSet(origin, result);
-    }
+    if (result && useCache) cache.localSet(origin, result);
     return result || '';
   });
 }

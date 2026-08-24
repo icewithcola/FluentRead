@@ -583,6 +583,7 @@
 import { computed, ref, watch, onUnmounted, nextTick } from 'vue';
 import { models, options, services, servicesType, defaultOption } from '../entrypoints/utils/option';
 import { Config } from '@/entrypoints/utils/model';
+import { TRANSLATION_COUNT_KEY, normalizeTranslationCount } from '@/entrypoints/utils/constant';
 import { storage } from '@wxt-dev/storage';
 import {
   ChatDotRound,
@@ -927,6 +928,11 @@ const handleExport = async () => {
     }
     if (Object.keys(cleanedConfig.user_role).length === 0) delete cleanedConfig.user_role;
   }
+  const dedicatedCount = await storage.getItem(TRANSLATION_COUNT_KEY);
+  cleanedConfig.count = Math.max(
+    normalizeTranslationCount(cleanedConfig.count),
+    dedicatedCount === null || dedicatedCount === undefined ? 0 : normalizeTranslationCount(dedicatedCount),
+  );
   exportData.value = JSON.stringify(cleanedConfig, null, 2);
   showExportBox.value = !showExportBox.value;
   showImportBox.value = false;
@@ -945,6 +951,9 @@ const saveImport = async () => {
       return;
     }
     await storage.setItem('local:config', JSON.stringify(parsedConfig));
+    if ('count' in parsedConfig) {
+      await storage.setItem(TRANSLATION_COUNT_KEY, normalizeTranslationCount(parsedConfig.count));
+    }
     ElMessage({ message: '配置导入成功!', type: 'success' });
     showImportBox.value = false;
     importData.value = '';

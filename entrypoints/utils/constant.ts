@@ -27,6 +27,15 @@ export const styles = {
   bilingualTranslation: 1,
 };
 
+/** Isolated from `local:config` so settings writes cannot roll the counter back. */
+export const TRANSLATION_COUNT_KEY = 'local:translationCount';
+
+export function normalizeTranslationCount(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.floor(n);
+}
+
 // 右键菜单ID常量
 export const CONTEXT_MENU_IDS = {
   PARENT: 'fluentread-parent',

@@ -75,6 +75,7 @@ import {
   Warning,
 } from '@element-plus/icons-vue';
 import { Config } from '../entrypoints/utils/model';
+import { TRANSLATION_COUNT_KEY, normalizeTranslationCount } from '../entrypoints/utils/constant';
 import { storage } from '@wxt-dev/storage';
 import browser from 'webextension-polyfill';
 
@@ -115,16 +116,50 @@ async function clearCache() {
 }
 
 let localConfig = reactive(new Config());
+const translationCount = ref(0);
 
-storage.getItem('local:config').then((value) => {
-  if (typeof value === 'string' && value) Object.assign(localConfig, JSON.parse(value));
+function applyDedicatedCount(value: unknown) {
+  if (value === null || value === undefined || value === '') return false;
+  translationCount.value = normalizeTranslationCount(value);
+  localConfig.count = translationCount.value;
+  return true;
+}
+
+function applyConfigCount(value: unknown) {
+  if (typeof value !== 'string' || !value) return;
+  try {
+    const parsed = JSON.parse(value);
+    Object.assign(localConfig, parsed);
+    translationCount.value = Math.max(translationCount.value, normalizeTranslationCount(parsed.count));
+  } catch {
+    // Ignore a malformed snapshot; the dedicated counter is the source of truth.
+  }
+}
+
+async function loadTranslationCount() {
+  const dedicated = await storage.getItem(TRANSLATION_COUNT_KEY);
+  applyDedicatedCount(dedicated);
+  const raw = await storage.getItem('local:config');
+  applyConfigCount(raw);
+  const next = Math.max(translationCount.value, normalizeTranslationCount(localConfig.count));
+  translationCount.value = next;
+  localConfig.count = next;
+  if (dedicated === null || dedicated === undefined || normalizeTranslationCount(dedicated) < next) {
+    await storage.setItem(TRANSLATION_COUNT_KEY, next);
+  }
+}
+
+void loadTranslationCount();
+
+storage.watch(TRANSLATION_COUNT_KEY, (newValue) => {
+  applyDedicatedCount(newValue);
 });
 
 storage.watch('local:config', (newValue) => {
-  if (typeof newValue === 'string' && newValue) Object.assign(localConfig, JSON.parse(newValue));
+  applyConfigCount(newValue);
 });
 
-const computedCount = computed(() => localConfig.count);
+const computedCount = computed(() => Math.max(translationCount.value, normalizeTranslationCount(localConfig.count)));
 </script>
 
 <style scoped>

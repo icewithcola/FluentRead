@@ -203,7 +203,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
-import { translateText } from '@/entrypoints/utils/translateApi';
+import { incrementTranslationCount, translateText } from '@/entrypoints/utils/translateApi';
 import { config } from '@/entrypoints/utils/config';
 import { isCantonese } from '@/entrypoints/utils/common';
 
@@ -394,6 +394,7 @@ const getTranslation = async () => {
     // 使用当前配置的翻译服务进行翻译
     const result = await translateText(selectedText.value);
     translationResult.value = result;
+    if (result?.trim()) incrementTranslationCount();
   } catch (err) {
     error.value = '翻译失败，请重试';
     console.error('Translation error:', err);
