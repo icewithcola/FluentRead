@@ -404,7 +404,7 @@ function applyTranslatedHTML(context: TranslationContext, translated: string): b
   if (replace && matchingOuter) replace(element, text);
   else element.innerHTML = matchingOuter ? parsed.firstElementChild!.innerHTML : text;
   context.lastOwnedHTML = element.innerHTML;
-  cache.localSet(context.sourceOuterHTML, element.outerHTML);
+  void cache.localSet(context.sourceOuterHTML, element.outerHTML);
   finishTranslated(context);
   return true;
 }
@@ -662,6 +662,27 @@ export async function autoTranslateEnglishPage(): Promise<void> {
   }
 }
 
+function applyCachedOrTranslate(
+  context: TranslationContext,
+  forceBypassCache: boolean,
+  origin: string,
+  onHit: (cached: string) => void,
+  onMiss: () => void,
+): void {
+  void (async () => {
+    const cached = forceBypassCache ? null : await cache.localGet(origin);
+    if (!contextIsCurrent(context)) {
+      invalidateContext(context);
+      return;
+    }
+    if (cached) {
+      onHit(cached);
+      return;
+    }
+    onMiss();
+  })();
+}
+
 /** Translate the live element beneath a mouse/touch point. */
 export function handleTranslation(mouseX: number, mouseY: number, delayTime = 0): void {
   if (!checkConfig()) return;
@@ -707,8 +728,7 @@ export function handleBilingualTranslation(
 
   const context = beginContext(node, forceBypassCache);
   if (!context) return;
-  const cached = forceBypassCache ? null : cache.localGet(node.textContent || '');
-  if (cached) {
+  void applyCachedOrTranslate(context, forceBypassCache, node.textContent || '', (cached) => {
     context.spinner = insertLoadingSpinner(node, true);
     markOwned(context.spinner);
     setTimeout(() => {
@@ -724,9 +744,9 @@ export function handleBilingualTranslation(
         finishFailed(context, error);
       }
     }, 250);
-    return;
-  }
-  runBilingualTranslation(context, forceBypassCache);
+  }, () => {
+    runBilingualTranslation(context, forceBypassCache);
+  });
 }
 
 export function handleSingleTranslation(
@@ -736,8 +756,7 @@ export function handleSingleTranslation(
 ): void {
   const context = beginContext(node, forceBypassCache);
   if (!context) return;
-  const cached = forceBypassCache ? null : cache.localGet(context.sourceOuterHTML);
-  if (cached) {
+  void applyCachedOrTranslate(context, forceBypassCache, context.sourceOuterHTML, (cached) => {
     context.spinner = insertLoadingSpinner(node, true);
     markOwned(context.spinner);
     setTimeout(() => {
@@ -758,9 +777,9 @@ export function handleSingleTranslation(
         finishFailed(context, error);
       }
     }, 250);
-    return;
-  }
-  runSingleTranslation(context, forceBypassCache);
+  }, () => {
+    runSingleTranslation(context, forceBypassCache);
+  });
 }
 
 /** Legacy helper retained for callers; button controls are intentionally skipped. */
@@ -769,18 +788,19 @@ export const handleBtnTranslation = throttle((node: HTMLElement) => {
   const origin = node.innerText;
   const generation = sessionGeneration;
   if (!shouldTranslateContent(origin)) return;
-  const cached = cache.localGet(origin);
-  if (cached) {
-    if (node.isConnected && node.innerText === origin) node.innerText = cached;
-    return;
-  }
+  void cache.localGet(origin).then((cached) => {
+    if (cached) {
+      if (node.isConnected && node.innerText === origin) node.innerText = cached;
+      return;
+    }
 
-  translateText(origin, document.title)
-    .then((text) => {
-      if (generation === sessionGeneration && node.isConnected && node.innerText === origin && text) {
-        node.innerText = text;
-        incrementTranslationCount();
-      }
-    })
-    .catch((error) => console.error('调用失败:', error));
+    translateText(origin, document.title)
+      .then((text) => {
+        if (generation === sessionGeneration && node.isConnected && node.innerText === origin && text) {
+          node.innerText = text;
+          incrementTranslationCount();
+        }
+      })
+      .catch((error) => console.error('调用失败:', error));
+  });
 }, 250);

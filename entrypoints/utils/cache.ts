@@ -2,21 +2,124 @@ import { customModelString } from './option';
 import { config } from '@/entrypoints/utils/config';
 import { cleanSummaryCache } from '@/entrypoints/utils/pageSummary';
 import {
-  getPageStorageItem,
   getPageStorageKeys,
   removePageStorageItem,
-  setPageStorageItem,
 } from '@/entrypoints/utils/pageStorage';
+import {
+  TRANSLATION_CACHE_MESSAGE_TYPE,
+  TRANSLATION_CACHE_TTL_MS,
+  hashCacheKey,
+  utf16Bytes,
+  type TranslationCacheAction,
+  type TranslationCacheGetResponse,
+  type TranslationCacheRequest,
+} from '@/entrypoints/utils/translationLruCache';
+import browser from 'webextension-polyfill';
 
 const prefix = 'flcache_'; // fluent read cache
+const LAST_SESSION_TIMESTAMP_KEY = 'flLastSessionTimestamp';
+const SESSION_VALUE_LIMIT = 8 * 1024 * 1024;
 
-// 构建缓存 key
+interface SessionEntry {
+  value: string;
+  lastAccessed: number;
+  valueBytes: number;
+}
+
+const sessionEntries = new Map<string, SessionEntry>();
+let sessionValueBytes = 0;
+const inFlightGets = new Map<string, Promise<string | null>>();
+
 function buildKey(message: string) {
   const { service, model, to, style, customModel } = config;
   const selectedModel =
     model[service] === customModelString ? customModel[service] : model[service];
-  // 前缀_服务_模型_目标语言_消息
   return [prefix, style, service, selectedModel, to, message].join('_');
+}
+
+function sessionGet(hash: string): string | null {
+  const entry = sessionEntries.get(hash);
+  if (!entry) return null;
+  if (Date.now() - entry.lastAccessed > TRANSLATION_CACHE_TTL_MS) {
+    sessionEntries.delete(hash);
+    sessionValueBytes = Math.max(0, sessionValueBytes - entry.valueBytes);
+    return null;
+  }
+  sessionEntries.delete(hash);
+  sessionEntries.set(hash, { ...entry, lastAccessed: Date.now() });
+  return entry.value;
+}
+
+function sessionSet(hash: string, value: string): void {
+  const existing = sessionEntries.get(hash);
+  if (existing) {
+    sessionEntries.delete(hash);
+    sessionValueBytes = Math.max(0, sessionValueBytes - existing.valueBytes);
+  }
+  const valueBytes = utf16Bytes(value);
+  sessionEntries.set(hash, { value, lastAccessed: Date.now(), valueBytes });
+  sessionValueBytes += valueBytes;
+  while (sessionValueBytes > SESSION_VALUE_LIMIT && sessionEntries.size > 0) {
+    const oldestKey = sessionEntries.keys().next().value;
+    if (typeof oldestKey !== 'string') break;
+    const oldest = sessionEntries.get(oldestKey);
+    sessionEntries.delete(oldestKey);
+    if (oldest) sessionValueBytes = Math.max(0, sessionValueBytes - oldest.valueBytes);
+  }
+}
+
+function sessionClear(): void {
+  sessionEntries.clear();
+  sessionValueBytes = 0;
+}
+
+function purgeLegacyPageCache(): void {
+  for (const key of getPageStorageKeys()) {
+    if (key && (key.startsWith(prefix) || key === LAST_SESSION_TIMESTAMP_KEY)) {
+      removePageStorageItem(key);
+    }
+  }
+}
+
+async function hashOrigin(origin: string): Promise<string | null> {
+  try {
+    return await hashCacheKey(buildKey(origin));
+  } catch {
+    return null;
+  }
+}
+
+async function sendCacheMessage(
+  action: TranslationCacheAction,
+  payload: Omit<TranslationCacheRequest, 'type' | 'action'> = {},
+): Promise<unknown> {
+  try {
+    return await browser.runtime.sendMessage({
+      type: TRANSLATION_CACHE_MESSAGE_TYPE,
+      action,
+      ...payload,
+    } satisfies TranslationCacheRequest);
+  } catch {
+    return null;
+  }
+}
+
+function readCachedValue(response: unknown): string | null {
+  if (!response || typeof response !== 'object') return null;
+  const value = (response as TranslationCacheGetResponse).value;
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+async function persistGet(hash: string): Promise<string | null> {
+  const pending = inFlightGets.get(hash);
+  if (pending) return pending;
+  const request = sendCacheMessage('get', { hash })
+    .then(readCachedValue)
+    .finally(() => {
+      inFlightGets.delete(hash);
+    });
+  inFlightGets.set(hash, request);
+  return request;
 }
 
 export const cache = {
@@ -32,7 +135,7 @@ export const cache = {
   },
 
   // local 系列为特化的缓存方法，用于操作翻译缓存
-  localSet(key: string, value: string) {
+  async localSet(key: string, value: string): Promise<void> {
     // 如果禁用缓存，则不执行任何操作
     if (!config.useCache) return;
 
@@ -41,47 +144,54 @@ export const cache = {
     if (!key.trim() || !value.trim()) return;
     if (key.includes('[object Object]') || value.includes('[object Object]')) return;
 
-    setPageStorageItem(buildKey(key), value);
+    const hash = await hashOrigin(key);
+    if (!hash) return;
+    sessionSet(hash, value);
+    await sendCacheMessage('set', { hash, value });
   },
 
-  localGet(origin: string) {
+  async localGet(origin: string): Promise<string | null> {
     // 如果禁用缓存，则始终返回 null
     if (!config.useCache) return null;
+    if (typeof origin !== 'string' || !origin.trim()) return null;
 
-    return getPageStorageItem(buildKey(origin));
-  },
+    const hash = await hashOrigin(origin);
+    if (!hash) return null;
 
-  localRemove(origin: string) {
-    const key = buildKey(origin);
-    const result = getPageStorageItem(key);
-    removePageStorageItem(key);
-    if (result) {
-      removePageStorageItem(buildKey(result));
+    const remembered = sessionGet(hash);
+    if (remembered !== null) {
+      void sendCacheMessage('touch', { hash });
+      return remembered;
     }
+
+    const persisted = await persistGet(hash);
+    if (persisted) sessionSet(hash, persisted);
+    return persisted;
   },
 
-  // 24h 清理一次缓存（每次页面打开即 main.js 时都应该调用）
+  async localRemove(origin: string): Promise<void> {
+    const hash = await hashOrigin(origin);
+    if (!hash) return;
+    const remembered = sessionEntries.get(hash);
+    if (remembered) {
+      sessionEntries.delete(hash);
+      sessionValueBytes = Math.max(0, sessionValueBytes - remembered.valueBytes);
+    }
+    await sendCacheMessage('remove', { hash });
+  },
+
+  // 打开页面时清理过期项，并丢掉旧版 localStorage 翻译缓存
   cleaner() {
-    const lastSessionTimestamp = getPageStorageItem('flLastSessionTimestamp');
-    const currentTime = Date.now();
-
-    if (!lastSessionTimestamp || currentTime - parseInt(lastSessionTimestamp) > 24 * 3600000) {
-      this.clean();
-      setPageStorageItem('flLastSessionTimestamp', currentTime.toString());
-    }
+    purgeLegacyPageCache();
+    void sendCacheMessage('evict');
   },
 
-  // 清除当前 url.host 的翻译缓存
-  clean() {
-    const keysToDelete = [];
-    // 收集所有要删除的键
-    for (const key of getPageStorageKeys()) {
-      if (key && key.startsWith(prefix)) keysToDelete.push(key);
-    }
-    // 批量删除
-    keysToDelete.forEach((key) => removePageStorageItem(key));
-    // Also clean page summary caches
+  // 清除翻译缓存（持久 LRU、会话缓存、摘要缓存）
+  async clean(): Promise<void> {
+    sessionClear();
+    purgeLegacyPageCache();
     cleanSummaryCache();
+    await sendCacheMessage('clear');
   },
 };
 

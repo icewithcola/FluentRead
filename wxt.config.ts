@@ -27,7 +27,7 @@ export default defineConfig({
   manifest: {
     name: '喵喵阅读',
     description: '一款 AI 驱动的开源浏览器翻译插件，带来母语般的双语阅读体验',
-    permissions: ['storage', 'contextMenus', 'offscreen'],
+    permissions: ['storage', 'contextMenus', 'offscreen', 'unlimitedStorage'],
     web_accessible_resources: [
       {
         resources: ['icon/*.png'],

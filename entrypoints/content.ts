@@ -104,8 +104,7 @@ export default defineContentScript({
     browser.runtime.onMessage.addListener(
       (message: { message: string }, sender: any, sendResponse: () => void) => {
         if (message.message === 'clearCache') {
-          cache.clean();
-          sendResponse();
+          void cache.clean().finally(() => sendResponse());
           return true;
         }
         return false;
@@ -691,8 +690,8 @@ function clearAllTranslations() {
     el.classList.remove('fluent-read-processed');
   });
 
-  // 5. 清除内存中的缓存
-  cache.clean();
+  // 5. 清除翻译缓存
+  void cache.clean();
 
   console.log('已清除所有翻译缓存');
 }

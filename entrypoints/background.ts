@@ -3,6 +3,11 @@ import { config } from '@/entrypoints/utils/config';
 import { CONTEXT_MENU_IDS } from '@/entrypoints/utils/constant';
 import { services } from '@/entrypoints/utils/option';
 import { method } from '@/entrypoints/utils/constant';
+import {
+  TRANSLATION_CACHE_MESSAGE_TYPE,
+  handleTranslationCacheMessage,
+  type TranslationCacheRequest,
+} from '@/entrypoints/utils/translationLruCache';
 
 // 翻译状态管理
 let translationStateMap = new Map<number, boolean>(); // tabId -> isTranslated
@@ -138,6 +143,9 @@ export default defineBackground({
       // Skip messages intended for other listeners (e.g. offscreen document)
       if (message?.type === 'CHROME_TRANSLATE_OFFSCREEN') return;
       if (message?.type === 'stream-translate') return;
+      if (message?.type === TRANSLATION_CACHE_MESSAGE_TYPE) {
+        return handleTranslationCacheMessage(message as TranslationCacheRequest);
+      }
 
       // Handle non-streaming summary requests
       if (message?.type === 'summary') {

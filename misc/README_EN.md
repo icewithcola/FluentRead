@@ -33,7 +33,7 @@ Whether you are reading papers, technical docs, or simply wandering the web, it 
 - **Selection translation**: Select text and hover the indicator that appears to open its translation. It supports bilingual/translation-only display, copying the translation, and browser text-to-speech for either text.
 - **Reading controls**: Configure the target language, shortcuts, floating button visibility and position, theme, animations, cache, translation concurrency, and progress panel. Settings can also be exported and imported.
 - **Context enhancement**: When translating a full page with the custom endpoint, you can optionally generate a page summary and include it as translation context.
-- **Local settings, provider-bound requests**: Extension settings and translation cache stay in the browser. Text to translate is sent to the translation service you choose, so use it in accordance with that provider's privacy policy.
+- **Local settings, provider-bound requests**: Extension settings and translation cache stay in the browser. The translation cache is a 128MB LRU (100MB of translations, 28MB reserved for metadata); entries expire after 1 month without use. Text to translate is sent to the translation service you choose, so use it in accordance with that provider's privacy policy.
 
 > **Service scope:** This project does not ship separate built-in adapters for Microsoft, DeepL, DeepSeek, Kimi, Ollama, or other providers. A provider with an OpenAI-compatible Chat Completions endpoint can be connected through **Custom endpoint**. Chrome's built-in Translation API is available only in Chrome versions that support it (the current code requires Chrome 138 or later); use Google Translate or a custom endpoint in other browsers.
 

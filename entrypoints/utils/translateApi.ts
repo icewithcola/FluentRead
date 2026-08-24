@@ -196,7 +196,7 @@ export async function translateText(
   if (detectlang(origin.replace(/[\s\u3000]/g, '')) === config.to) return origin;
 
   if (useCache && !bypassCacheRead) {
-    const cachedResult = cache.localGet(origin);
+    const cachedResult = await cache.localGet(origin);
     if (cachedResult) return cachedResult;
   }
 
@@ -215,7 +215,7 @@ export async function translateText(
         });
         if (!result || result === origin) return '';
 
-        if (useCache) cache.localSet(origin, result);
+        if (useCache) void cache.localSet(origin, result);
         return result;
       } catch (error) {
         if (isCancelled(signal, error)) throw error;
@@ -261,7 +261,7 @@ export async function translateTextStream(
 
   if (detectlang(origin.replace(/[\s\u3000]/g, '')) === config.to) return origin;
   if (useCache && !bypassCacheRead) {
-    const cachedResult = cache.localGet(origin);
+    const cachedResult = await cache.localGet(origin);
     if (cachedResult) return cachedResult;
   }
 
@@ -280,7 +280,7 @@ export async function translateTextStream(
       },
       onChunk,
     );
-    if (result && useCache) cache.localSet(origin, result);
+    if (result && useCache) void cache.localSet(origin, result);
     return result || '';
   });
 }

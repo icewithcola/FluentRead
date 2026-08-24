@@ -76,6 +76,7 @@ import {
 } from '@element-plus/icons-vue';
 import { Config } from '../entrypoints/utils/model';
 import { TRANSLATION_COUNT_KEY, normalizeTranslationCount } from '../entrypoints/utils/constant';
+import { TRANSLATION_CACHE_MESSAGE_TYPE } from '../entrypoints/utils/translationLruCache';
 import { storage } from '@wxt-dev/storage';
 import browser from 'webextension-polyfill';
 
@@ -96,12 +97,16 @@ async function clearCache() {
     isClearing.value = true;
     clearResult.value = '';
 
-    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tabs[0]?.id) {
-      throw new Error('No active tab found');
-    }
+    await browser.runtime.sendMessage({ type: TRANSLATION_CACHE_MESSAGE_TYPE, action: 'clear' });
 
-    await browser.tabs.sendMessage(tabs[0].id, { message: 'clearCache' });
+    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+    if (tabs[0]?.id) {
+      try {
+        await browser.tabs.sendMessage(tabs[0].id, { message: 'clearCache' });
+      } catch {
+        // The active tab may not have a content script (chrome://, the store, …).
+      }
+    }
 
     clearResult.value = 'success';
   } catch (error) {

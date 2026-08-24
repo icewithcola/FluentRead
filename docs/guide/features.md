@@ -30,7 +30,7 @@
 <img src="/sample-git-2.gif" alt="回译功能" style="width: 50%; max-width: 100%;border: 1px solid #eee;border-radius: 4px;box-shadow: 0 1px 2px rgba(0,0,0,0.05);" />
 
 ### 智能缓存
-智能缓存功能会自动保存已翻译的内容 24 小时，相同文本无需重复翻译，提高翻译效率，节省时间。
+智能缓存会把已翻译的内容保存在本地 LRU 中，最长保留 1 个月。译文数据上限为 100MB（总容量 128MB，其中 28MB 预留给元数据和其他开销）；超出后会先清掉一个月未使用的条目，再淘汰最旧的条目。相同文本无需重复翻译。
 
 <img src="/sample-git-3.gif" alt="智能缓存" style="width: 60%; max-width: 20%;border: 1px solid #eee;border-radius: 4px;box-shadow: 0 1px 2px rgba(0,0,0,0.05);" />
 
