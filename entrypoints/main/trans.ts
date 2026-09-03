@@ -34,6 +34,8 @@ const OWNED_ATTR = 'data-fr-owned';
 const BILINGUAL_CLASS = 'fluent-read-bilingual';
 const BILINGUAL_CONTENT_CLASS = 'fluent-read-bilingual-content';
 const RTL_TEXT_RE = /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/;
+const BILINGUAL_CACHE_KEY_PREFIX = 'bilingual-v2:';
+const SINGLE_CACHE_KEY_PREFIX = 'single-v2:';
 
 type RecordStatus = 'pending' | 'translating' | 'translated' | 'failed';
 
@@ -117,6 +119,16 @@ function syncOwnedContent(context: TranslationContext): void {
   if (context.record) context.record.lastOwnedHTML = context.lastOwnedHTML;
 }
 
+// v2 includes inline <code> in translation input. Namespacing prevents an
+// older cached result, generated without that context, from being reused.
+function bilingualCacheKey(context: TranslationContext): string {
+  return `${BILINGUAL_CACHE_KEY_PREFIX}${context.sourceText}`;
+}
+
+function singleCacheKey(context: TranslationContext): string {
+  return `${SINGLE_CACHE_KEY_PREFIX}${context.sourceOuterHTML}`;
+}
+
 /** Move the original live children out before replacing innerHTML. */
 function captureOriginalChildren(context: TranslationContext): void {
   const record = context.record;
@@ -196,7 +208,7 @@ function releaseRecord(record: TranslationRecord): void {
 function createRecord(element: Element, generation: number): TranslationRecord | null {
   if (!(element instanceof HTMLElement) || !element.isConnected) return null;
   if (element.hasAttribute(TRANSLATED_ID_ATTR) || element.hasAttribute(TRANSLATED_ATTR)) return null;
-  if (!shouldTranslateContent(getTranslatableText(element))) return null;
+  if (!shouldTranslateContent(getTranslatableText(element, false))) return null;
 
   const record: TranslationRecord = {
     id: `fr-node-${nodeIdCounter++}`,
@@ -222,7 +234,7 @@ function beginContext(element: HTMLElement, forceRetry = false): TranslationCont
   // Manual hover calls can bypass DOM discovery, so apply the same cheap gate
   // before allocating request state. Existing records keep their captured
   // source, which also makes retries stable if the page changed meanwhile.
-  if (!record && !shouldTranslateContent(getTranslatableText(element))) return null;
+  if (!record && !shouldTranslateContent(getTranslatableText(element, false))) return null;
   if (record) {
     if (!recordIsCurrent(record)) return null;
     if (record.status === 'translating') return null;
@@ -404,7 +416,7 @@ function applyTranslatedHTML(context: TranslationContext, translated: string): b
   if (replace && matchingOuter) replace(element, text);
   else element.innerHTML = matchingOuter ? parsed.firstElementChild!.innerHTML : text;
   context.lastOwnedHTML = element.innerHTML;
-  void cache.localSet(context.sourceOuterHTML, element.outerHTML);
+  void cache.localSet(singleCacheKey(context), element.outerHTML);
   finishTranslated(context);
   return true;
 }
@@ -433,8 +445,14 @@ function runBilingualTranslation(context: TranslationContext, forceBypassCache: 
   };
 
   const request = config.useStream && servicesType.isCustom(config.service)
-    ? translateTextStream(origin, document.title, onStreamChunk, { bypassCacheRead: forceBypassCache })
-    : translateText(origin, document.title, { bypassCacheRead: forceBypassCache });
+    ? translateTextStream(origin, document.title, onStreamChunk, {
+        bypassCacheRead: forceBypassCache,
+        cacheKey: bilingualCacheKey(context),
+      })
+    : translateText(origin, document.title, {
+        bypassCacheRead: forceBypassCache,
+        cacheKey: bilingualCacheKey(context),
+      });
 
   request
     .then((text) => {
@@ -488,8 +506,14 @@ function runSingleTranslation(context: TranslationContext, forceBypassCache: boo
   };
 
   const request = config.useStream && servicesType.isCustom(config.service)
-    ? translateTextStream(origin, document.title, onStreamChunk, { bypassCacheRead: forceBypassCache })
-    : translateText(origin, document.title, { bypassCacheRead: forceBypassCache });
+    ? translateTextStream(origin, document.title, onStreamChunk, {
+        bypassCacheRead: forceBypassCache,
+        cacheKey: singleCacheKey(context),
+      })
+    : translateText(origin, document.title, {
+        bypassCacheRead: forceBypassCache,
+        cacheKey: singleCacheKey(context),
+      });
 
   request
     .then((text) => {
@@ -728,7 +752,7 @@ export function handleBilingualTranslation(
 
   const context = beginContext(node, forceBypassCache);
   if (!context) return;
-  void applyCachedOrTranslate(context, forceBypassCache, node.textContent || '', (cached) => {
+  void applyCachedOrTranslate(context, forceBypassCache, bilingualCacheKey(context), (cached) => {
     context.spinner = insertLoadingSpinner(node, true);
     markOwned(context.spinner);
     setTimeout(() => {
@@ -756,7 +780,7 @@ export function handleSingleTranslation(
 ): void {
   const context = beginContext(node, forceBypassCache);
   if (!context) return;
-  void applyCachedOrTranslate(context, forceBypassCache, context.sourceOuterHTML, (cached) => {
+  void applyCachedOrTranslate(context, forceBypassCache, singleCacheKey(context), (cached) => {
     context.spinner = insertLoadingSpinner(node, true);
     markOwned(context.spinner);
     setTimeout(() => {

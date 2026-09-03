@@ -187,6 +187,7 @@ export async function translateText(
     timeout = 45000,
     useCache = config.useCache,
     bypassCacheRead = false,
+    cacheKey = origin,
   } = options;
   const retryLimit = Number.isFinite(Number(maxRetries))
     ? Math.max(0, Math.floor(Number(maxRetries)))
@@ -196,7 +197,7 @@ export async function translateText(
   if (detectlang(origin.replace(/[\s\u3000]/g, '')) === config.to) return origin;
 
   if (useCache && !bypassCacheRead) {
-    const cachedResult = await cache.localGet(origin);
+    const cachedResult = await cache.localGet(cacheKey);
     if (cachedResult) return cachedResult;
   }
 
@@ -215,7 +216,7 @@ export async function translateText(
         });
         if (!result || result === origin) return '';
 
-        if (useCache) void cache.localSet(origin, result);
+        if (useCache) void cache.localSet(cacheKey, result);
         return result;
       } catch (error) {
         if (isCancelled(signal, error)) throw error;
@@ -248,6 +249,8 @@ export interface TranslateOptions {
   timeout?: number;
   useCache?: boolean;
   bypassCacheRead?: boolean;
+  /** Optional cache namespace when the request format changes without changing its text. */
+  cacheKey?: string;
 }
 
 /** Streaming translation over a cancellable runtime Port. */
@@ -257,11 +260,16 @@ export async function translateTextStream(
   onChunk: (accumulated: string) => void,
   options: TranslateOptions = {},
 ): Promise<string> {
-  const { timeout = 60000, useCache = config.useCache, bypassCacheRead = false } = options;
+  const {
+    timeout = 60000,
+    useCache = config.useCache,
+    bypassCacheRead = false,
+    cacheKey = origin,
+  } = options;
 
   if (detectlang(origin.replace(/[\s\u3000]/g, '')) === config.to) return origin;
   if (useCache && !bypassCacheRead) {
-    const cachedResult = await cache.localGet(origin);
+    const cachedResult = await cache.localGet(cacheKey);
     if (cachedResult) return cachedResult;
   }
 
@@ -280,7 +288,7 @@ export async function translateTextStream(
       },
       onChunk,
     );
-    if (result && useCache) void cache.localSet(origin, result);
+    if (result && useCache) void cache.localSet(cacheKey, result);
     return result || '';
   });
 }

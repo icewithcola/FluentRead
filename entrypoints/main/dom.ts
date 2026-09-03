@@ -329,8 +329,12 @@ function hasSkippedAncestor(element: Element): boolean {
   return false;
 }
 
-/** Text that remains after removing non-content subtrees from a translation unit. */
-export function getTranslatableText(element: Element): string {
+/**
+ * Text that remains after removing non-content subtrees from a translation unit.
+ * Inline code can be retained as context without making a code-only wrapper
+ * eligible for translation.
+ */
+export function getTranslatableText(element: Element, includeInlineCode = true): string {
   if (hasSkippedAncestor(element)) return '';
   const parts: string[] = [];
   const visit = (node: Node): void => {
@@ -339,6 +343,19 @@ export function getTranslatableText(element: Element): string {
       return;
     }
     if (!(node instanceof Element)) return;
+    // Code is not a standalone translation candidate, but inline code often
+    // supplies an essential subject or API name for the surrounding prose.
+    // Keep its literal text in that prose unit so bilingual output does not
+    // turn "only in draw(...)" into "only in".
+    if (
+      includeInlineCode &&
+      node.tagName.toLowerCase() === 'code' &&
+      !isOwnedElement(node) &&
+      isVisible(node)
+    ) {
+      if (node.textContent) parts.push(node.textContent);
+      return;
+    }
     if (
       isSkippedElement(node) ||
       isOwnedElement(node) ||
@@ -406,16 +423,36 @@ function isVisible(element: Element): boolean {
     if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
       return false;
     }
+
+    // Screen-reader-only controls are commonly hidden with a zero-area
+    // legacy `clip: rect(...)` rule. Google search uses this for its skip
+    // links until they receive focus. Unlike display:none, their containing
+    // wrapper remains visible, so excluding the clipped descendant here keeps
+    // that wrapper from becoming a translation unit.
+    const clip = style.clip;
+    const clipValues = clip.match(/^rect\(\s*([^,\s]+)\s*,?\s*([^,\s]+)\s*,?\s*([^,\s]+)\s*,?\s*([^,\s]+)\s*\)$/i);
+    if (
+      clipValues &&
+      !clipValues.slice(1).some((value) => value.toLowerCase() === 'auto') &&
+      clipValues[1] === clipValues[3] &&
+      clipValues[2] === clipValues[4]
+    ) {
+      return false;
+    }
   }
   return true;
 }
 
-function hasBlockChild(element: Element): boolean {
+function hasBlockDescendant(element: Element): boolean {
   return Array.from(element.children).some((child) => {
     const tag = child.tagName.toLowerCase();
-    if (isSkippedElement(child) || isOwnedElement(child)) return false;
+    if (isSkippedElement(child) || isOwnedElement(child) || !isVisible(child)) return false;
     if (!hasMeaningfulText(child.textContent)) return false;
-    return !inlineSet.has(tag);
+    // Inline wrappers such as Google Search's result link can contain a
+    // heading. The heading is the stable translation unit; selecting the
+    // wrapper instead appends bilingual text outside the title and lets the
+    // site's layout reorder it.
+    return !inlineSet.has(tag) || hasBlockDescendant(child);
   });
 }
 
@@ -429,7 +466,8 @@ function hasInlineContent(element: Element): boolean {
 }
 
 function hasTranslatableText(element: Element): boolean {
-  return !isOwnedElement(element) && shouldTranslateContent(getTranslatableText(element));
+  // Inline code enriches a prose translation, but code alone is not prose.
+  return !isOwnedElement(element) && shouldTranslateContent(getTranslatableText(element, false));
 }
 
 function isMainlyNumericContent(element: Element): boolean {
@@ -478,12 +516,16 @@ export function isTranslationCandidate(element: Element): boolean {
   if (containerSet.has(tag)) {
     // Containers containing a nested block are traversed so the smallest
     // meaningful units win. Inline markup remains part of the parent unit.
-    return !hasBlockChild(element);
+    return !hasBlockDescendant(element);
   }
 
   // Standalone links and inline fragments are useful for hover translation,
-  // but wrappers with no text are not.
-  return inlineSet.has(tag) && (hasMeaningfulText(element.textContent) || hasInlineContent(element));
+  // but wrappers around a nested block must yield to that block.
+  return (
+    inlineSet.has(tag) &&
+    !hasBlockDescendant(element) &&
+    (hasMeaningfulText(element.textContent) || hasInlineContent(element))
+  );
 }
 
 type CompatResolution = { candidate?: Element; skip: boolean };
@@ -854,7 +896,19 @@ export function LLMStandardHTML(node: Element): string {
     // Keep serialization consistent with getTranslatableText(). In
     // particular, a visible parent may contain hidden or translate="no"
     // descendants that must not leak into the request.
-    if (isOwnedElement(current) || isSkippedElement(current) || !isVisible(current)) return '';
+    if (isOwnedElement(current) || !isVisible(current)) return '';
+
+    // A code element must not become a translation unit of its own, but it
+    // must stay in an enclosing prose unit. Preserve only its literal text:
+    // page-provided markup inside code is presentation, not translatable
+    // structure, and could otherwise reintroduce a skipped subtree.
+    if (tag === 'code') {
+      const code = document.createElement('code');
+      code.textContent = current.textContent || '';
+      return code.outerHTML;
+    }
+
+    if (isSkippedElement(current)) return '';
 
     if (inlineSet.has(tag)) {
       // Serialize children through the same skip rules. A deep clone would
