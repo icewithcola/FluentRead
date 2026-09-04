@@ -356,6 +356,12 @@ function setTranslationText(content: HTMLElement, text: string): void {
 function stabilizeTranslationPlacement(content: HTMLElement, host: HTMLElement): void {
   if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return;
   const computed = window.getComputedStyle(host);
+  if (computed.display === 'grid' || computed.display === 'inline-grid') {
+    // Appended translations otherwise enter the next available grid cell,
+    // which can be a narrow label/marker column on list items.
+    content.style.setProperty('grid-column', '1 / -1', 'important');
+    return;
+  }
   if (computed.display !== 'flex' && computed.display !== 'inline-flex') return;
 
   // A reversed flex axis makes the last DOM child render before the source.
