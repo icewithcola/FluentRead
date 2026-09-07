@@ -13,7 +13,7 @@ import {
   smashTruncationStyle,
   shouldTranslateContent,
 } from '@/entrypoints/main/dom';
-import { detectlang, throttle } from '@/entrypoints/utils/common';
+import { detectlang, getCjkLanguageTag, throttle } from '@/entrypoints/utils/common';
 import { getMainDomain, replaceCompatFn } from '@/entrypoints/main/compat';
 import { config } from '@/entrypoints/utils/config';
 import {
@@ -338,6 +338,8 @@ function appendBilingualContent(element: HTMLElement, text: string): HTMLElement
   element.classList.add(BILINGUAL_CLASS);
   const content = document.createElement('span');
   content.className = BILINGUAL_CONTENT_CLASS;
+  const cjkLanguage = getCjkLanguageTag(config.to);
+  if (cjkLanguage) content.lang = cjkLanguage;
   markOwned(content);
   const style = options.styles.find((item) => item.value === config.style && !item.disabled);
   if (style?.class) content.classList.add(style.class);

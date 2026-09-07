@@ -98,7 +98,7 @@
             "
             class="fr-translation-result fr-no-select"
           >
-            <pre>{{ translationResult }}</pre>
+            <pre :lang="getCjkLanguageTag(config.to)">{{ translationResult }}</pre>
             <button
               class="fr-text-audio-btn"
               @click="(e) => toggleAudio(translationResult, e)"
@@ -205,7 +205,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { incrementTranslationCount, translateText } from '@/entrypoints/utils/translateApi';
 import { config } from '@/entrypoints/utils/config';
-import { isCantonese } from '@/entrypoints/utils/common';
+import { getCjkLanguageTag, isCantonese } from '@/entrypoints/utils/common';
 
 // 状态变量
 const selectedText = ref('');
@@ -908,6 +908,12 @@ onBeforeUnmount(() => {
   font-family: inherit;
   font-size: inherit;
   color: inherit !important;
+}
+
+.fr-translation-result pre:lang(zh),
+.fr-translation-result pre:lang(ja),
+.fr-translation-result pre:lang(ko) {
+  font-family: sans-serif !important;
 }
 
 .fr-original-text {

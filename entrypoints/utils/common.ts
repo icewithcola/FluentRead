@@ -1,6 +1,12 @@
 // 防抖限流函数，可传递参数
 import { franc } from 'franc-min';
 
+const CJK_LANGUAGE_RE = /^(?:zh|ja|ko)(?:-|$)/i;
+
+export function getCjkLanguageTag(language: string): string | undefined {
+  return CJK_LANGUAGE_RE.test(language) ? language : undefined;
+}
+
 // 防抖限流函数，可传递参数
 export function throttle(fn: (...args: any[]) => void, interval: number) {
   let last = 0; // 维护上次执行的时间
