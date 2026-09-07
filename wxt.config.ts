@@ -18,6 +18,8 @@ export default defineConfig({
     plugins: [vue()],
     define: {
       'process.env.VUE_APP_VERSION': JSON.stringify(packageJson.version),
+      // Content scripts run in an isolated world and must not register policies against the page CSP.
+      'window.trustedTypes': 'undefined',
     },
     build: {
       minify: isDebug ? false : undefined,
