@@ -6,10 +6,17 @@
  * when the user restores the page or stops translation.
  */
 
-import { enqueueTranslation, clearTranslationQueue, getQueueStatus, TranslationCancelledError } from './translateQueue';
+import {
+  enqueueTranslation,
+  clearTranslationQueue,
+  getQueueStatus,
+  markPrefixCacheWarm,
+  TranslationCancelledError,
+} from './translateQueue';
 import browser from 'webextension-polyfill';
 import { config } from './config';
 import { cache } from './cache';
+import { contentPostHandler } from './check';
 import { detectlang, getCjkLanguageTag } from './common';
 import { storage } from '@wxt-dev/storage';
 import { servicesType } from './option';
@@ -17,7 +24,19 @@ import { buildPageContext, getCurrentPageSummary, warmUpPageSummary } from './pa
 import { TRANSLATION_COUNT_KEY, normalizeTranslationCount } from './constant';
 
 const isDev = process.env.NODE_ENV === 'development';
+
+interface InFlightStreamEntry {
+  promise: Promise<string>;
+  listeners: Set<(accumulated: string) => void>;
+  latestAccumulated: string;
+}
+
 const inFlightTranslations = new Map<string, Promise<string>>();
+const inFlightStreamTranslations = new Map<string, InFlightStreamEntry>();
+
+function buildInFlightKey(cacheKey: string): string {
+  return `${config.service}:${config.to}:${cacheKey.replace(/\s+/g, ' ').trim()}`;
+}
 
 const TRUNCATION_CHECK_MIN_SOURCE_CHARS = 2000;
 const TRUNCATION_MIN_LENGTH_RATIO = 0.25;
@@ -71,11 +90,15 @@ function plainTextLength(value: string): number {
     .trim().length;
 }
 
-function assertTranslationComplete(origin: string, translated: string): void {
+function isTranslationTruncated(origin: string, translated: string): boolean {
   const sourceLen = plainTextLength(origin);
-  if (sourceLen <= TRUNCATION_CHECK_MIN_SOURCE_CHARS) return;
+  if (sourceLen <= TRUNCATION_CHECK_MIN_SOURCE_CHARS) return false;
   const translatedLen = plainTextLength(translated);
-  if (translatedLen / sourceLen < TRUNCATION_MIN_LENGTH_RATIO) {
+  return translatedLen / sourceLen < TRUNCATION_MIN_LENGTH_RATIO;
+}
+
+function assertTranslationComplete(origin: string, translated: string): void {
+  if (isTranslationTruncated(origin, translated)) {
     throw new Error('翻译结果不完整（疑似被模型截断），请重试');
   }
 }
@@ -368,6 +391,7 @@ function requestViaPort(
 
     const onMessage = (message: any) => {
       if (message?.type === 'stream-chunk') {
+        markPrefixCacheWarm();
         if (!onChunk) return;
         try {
           onChunk(message.accumulated);
@@ -383,6 +407,7 @@ function requestViaPort(
       }
 
       if (message?.type !== 'stream-done') return;
+      markPrefixCacheWarm();
       const result = message.result;
       if (result && typeof result === 'object') {
         const response = result as any;
@@ -470,7 +495,7 @@ export async function translateText(
   if (detectlang(origin.replace(/[\s\u3000]/g, '')) === config.to) return origin;
 
   const shouldDedupe = useCache && !bypassCacheRead;
-  const inFlightKey = shouldDedupe ? `${config.service}:${config.to}:${cacheKey}` : '';
+  const inFlightKey = shouldDedupe ? buildInFlightKey(cacheKey) : '';
   if (shouldDedupe) {
     const existing = inFlightTranslations.get(inFlightKey);
     if (existing) return existing;
@@ -553,6 +578,7 @@ export async function translateText(
 export function cancelAllTranslations(): void {
   if (isDev) console.log('[翻译API] 取消所有等待中的翻译任务');
   inFlightTranslations.clear();
+  inFlightStreamTranslations.clear();
   clearTranslationQueue();
 }
 
@@ -570,6 +596,55 @@ export interface TranslateOptions {
   cacheKey?: string;
 }
 
+export interface BatchTranslationRequestItem {
+  id: number;
+  origin: string;
+  cacheKey: string;
+  onChunk?: (accumulated: string) => void;
+}
+
+const BATCH_MARKER_RE = /(?:\[\[?\s*@?FR_SEG_(\d+)@?\s*\]?\]|@@\s*FR_SEG_(\d+)\s*@@)\s*:?\s*/gi;
+const TRAILING_PARTIAL_MARKER_RE =
+  /(?:\[\s*\[?\s*@?(?:F(?:R(?:_(?:S(?:E(?:G(?:_(?:\d+@?\s*\]?)?)?)?)?)?)?)?)?|@\s*@?\s*(?:F(?:R(?:_(?:S(?:E(?:G(?:_(?:\d+@?)?)?)?)?)?)?)?)?)$/i;
+
+export function formatBatchPayload(
+  items: ReadonlyArray<{ id: number; origin: string }>,
+): string {
+  return items
+    .map((item) => `[[@FR_SEG_${item.id}@]]\n${item.origin.replace(/\s+/g, ' ').trim()}`)
+    .join('\n');
+}
+
+export function parseBatchOutput(raw: string, isPartialStream = false): Map<number, string> {
+  const text = isPartialStream ? raw.replace(TRAILING_PARTIAL_MARKER_RE, '') : raw;
+  const results = new Map<number, string>();
+  const matches: Array<{ id: number; start: number; contentStart: number }> = [];
+
+  const regex = new RegExp(BATCH_MARKER_RE.source, 'gi');
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    const id = Number(match[1] ?? match[2]);
+    if (Number.isInteger(id)) {
+      matches.push({
+        id,
+        start: match.index,
+        contentStart: match.index + match[0].length,
+      });
+    }
+  }
+
+  for (let i = 0; i < matches.length; i++) {
+    const current = matches[i];
+    const nextStart = i + 1 < matches.length ? matches[i + 1].start : text.length;
+    const segmentText = contentPostHandler(text.slice(current.contentStart, nextStart));
+    if (segmentText) {
+      results.set(current.id, segmentText);
+    }
+  }
+
+  return results;
+}
+
 /** Streaming translation over a cancellable runtime Port. */
 export async function translateTextStream(
   origin: string,
@@ -585,9 +660,36 @@ export async function translateTextStream(
   } = options;
 
   if (detectlang(origin.replace(/[\s\u3000]/g, '')) === config.to) return origin;
-  if (useCache && !bypassCacheRead) {
+
+  const shouldDedupe = useCache && !bypassCacheRead;
+  const inFlightKey = shouldDedupe ? buildInFlightKey(cacheKey) : '';
+  const attachStreamListener = (entry: InFlightStreamEntry): Promise<string> => {
+    entry.listeners.add(onChunk);
+    if (entry.latestAccumulated) {
+      try {
+        onChunk(entry.latestAccumulated);
+      } catch {
+        // Ignore replay errors from detached callers
+      }
+    }
+    return entry.promise;
+  };
+
+  if (shouldDedupe) {
+    const existingStream = inFlightStreamTranslations.get(inFlightKey);
+    if (existingStream) return attachStreamListener(existingStream);
+    const existing = inFlightTranslations.get(inFlightKey);
+    if (existing) return existing;
+  }
+
+  if (shouldDedupe) {
     const cachedResult = await cache.localGet(cacheKey);
     if (cachedResult) return cachedResult;
+
+    const existingStreamAfterCache = inFlightStreamTranslations.get(inFlightKey);
+    if (existingStreamAfterCache) return attachStreamListener(existingStreamAfterCache);
+    const existingAfterCache = inFlightTranslations.get(inFlightKey);
+    if (existingAfterCache) return existingAfterCache;
   }
 
   if (config.enablePageSummary && servicesType.isUseModel(config.service)) {
@@ -595,8 +697,14 @@ export async function translateTextStream(
   }
 
   const chunks = splitIntoTranslationChunks(origin);
+  const listeners = new Set<(accumulated: string) => void>([onChunk]);
+  const streamEntry: InFlightStreamEntry = {
+    promise: Promise.resolve(''),
+    listeners,
+    latestAccumulated: '',
+  };
 
-  return enqueueTranslation(async (signal) => {
+  const taskPromise = enqueueTranslation(async (signal) => {
     throwIfAborted(signal);
     const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
     let combined = '';
@@ -616,7 +724,17 @@ export async function translateTextStream(
           invalid: '流式翻译返回了无效的响应格式',
         },
         (chunkAccumulated) => {
-          onChunk(prefix ? appendTranslatedChunk(prefix, chunkAccumulated) : chunkAccumulated);
+          const nextAccumulated = prefix
+            ? appendTranslatedChunk(prefix, chunkAccumulated)
+            : chunkAccumulated;
+          streamEntry.latestAccumulated = nextAccumulated;
+          for (const listener of streamEntry.listeners) {
+            try {
+              listener(nextAccumulated);
+            } catch {
+              // Isolate listener errors from other subscribers sharing this stream
+            }
+          }
         },
       );
       if (chunkResult) {
@@ -630,4 +748,126 @@ export async function translateTextStream(
     if (useCache) void cache.localSet(cacheKey, combined);
     return combined;
   });
+
+  if (!shouldDedupe) return taskPromise;
+
+  const trackedPromise = taskPromise.finally(() => {
+    if (inFlightStreamTranslations.get(inFlightKey) === streamEntry) {
+      inFlightStreamTranslations.delete(inFlightKey);
+    }
+    if (inFlightTranslations.get(inFlightKey) === trackedPromise) {
+      inFlightTranslations.delete(inFlightKey);
+    }
+  });
+  streamEntry.promise = trackedPromise;
+  inFlightStreamTranslations.set(inFlightKey, streamEntry);
+  inFlightTranslations.set(inFlightKey, trackedPromise);
+  return trackedPromise;
+}
+
+/** Translate multiple uncached page segments in a single LLM request and cache each result individually. */
+export async function translateBatch(
+  items: BatchTranslationRequestItem[],
+  context: string = typeof document === 'undefined' ? '' : buildPageContext(undefined, { includePreceding: false }),
+  options: TranslateOptions = {},
+): Promise<Map<number, string>> {
+  if (items.length === 0) return new Map();
+
+  const useStream = config.useStream && servicesType.isCustom(config.service);
+  const {
+    maxRetries = 3,
+    retryDelay = 1000,
+    timeout = useStream ? 60000 : 45000,
+    useCache = config.useCache,
+  } = options;
+  const retryLimit = Number.isFinite(Number(maxRetries))
+    ? Math.max(0, Math.floor(Number(maxRetries)))
+    : 0;
+  const retryInterval = Number.isFinite(Number(retryDelay)) ? Math.max(0, Number(retryDelay)) : 0;
+
+  if (config.enablePageSummary && servicesType.isUseModel(config.service)) {
+    warmUpPageSummary();
+  }
+
+  const batchOrigin = formatBatchPayload(items);
+
+  return enqueueTranslation(async (signal) => {
+    throwIfAborted(signal);
+    const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
+
+    let rawResult = '';
+    if (useStream) {
+      const lastEmitted = new Map<number, string>();
+      rawResult = await requestViaPort(
+        { context, origin: batchOrigin, pageSummary },
+        signal,
+        timeout,
+        {
+          timeout: '流式翻译请求超时',
+          disconnect: '流式翻译连接意外断开',
+          failure: '流式翻译失败',
+          invalid: '流式翻译返回了无效的响应格式',
+        },
+        (accumulated) => {
+          const partialMap = parseBatchOutput(accumulated, true);
+          for (const item of items) {
+            if (!item.onChunk) continue;
+            const segText = partialMap.get(item.id);
+            if (segText && segText !== lastEmitted.get(item.id)) {
+              lastEmitted.set(item.id, segText);
+              try {
+                item.onChunk(segText);
+              } catch {
+                // Isolate per-element stream preview error
+              }
+            }
+          }
+        },
+      );
+    } else {
+      const attempt = async (retryCount: number): Promise<string> => {
+        throwIfAborted(signal);
+        try {
+          return await requestViaPort(
+            { context, origin: batchOrigin, pageSummary },
+            signal,
+            timeout,
+            {
+              timeout: '翻译请求超时',
+              disconnect: '翻译连接意外断开',
+              failure: '翻译失败',
+              invalid: '翻译返回了无效的响应格式',
+            },
+          );
+        } catch (error) {
+          if (isCancelled(signal, error)) throw error;
+          if (retryCount >= retryLimit) throw error;
+          if (isDev) {
+            console.log(`[翻译API] 批量翻译失败，${retryCount + 1}/${retryLimit} 次重试，原因:`, error);
+          }
+          await wait(retryInterval, signal);
+          return attempt(retryCount + 1);
+        }
+      };
+      rawResult = await attempt(0);
+    }
+
+    if (!rawResult) return new Map();
+
+    const finalMap = parseBatchOutput(rawResult, false);
+    const validatedMap = new Map<number, string>();
+
+    for (const item of items) {
+      const segText = finalMap.get(item.id);
+      if (!segText) continue;
+      const normalizedItemOrigin = item.origin.replace(/\s+/g, ' ').trim();
+      if (segText === item.origin || segText === normalizedItemOrigin) continue;
+      if (isTranslationTruncated(item.origin, segText)) continue;
+
+      if (useCache) void cache.localSet(item.cacheKey, segText);
+      validatedMap.set(item.id, segText);
+    }
+
+    return validatedMap;
+  }, items.length);
 }

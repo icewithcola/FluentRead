@@ -1,6 +1,6 @@
 import { customModelString, defaultOption, servicesType } from './option';
 import { config } from '@/entrypoints/utils/config';
-import { cleanSummaryCache, getCurrentPageSummary } from '@/entrypoints/utils/pageSummary';
+import { cleanSummaryCache } from '@/entrypoints/utils/pageSummary';
 import {
   getPageStorageKeys,
   removePageStorageItem,
@@ -31,17 +31,17 @@ let sessionValueBytes = 0;
 const inFlightGets = new Map<string, Promise<string | null>>();
 
 function buildKey(message: string) {
-  const { service, model, to, customModel, system_role, user_role, enablePageSummary } = config;
+  const { service, model, to, customModel, system_role, user_role } = config;
   const selectedModel =
     model[service] === customModelString ? customModel[service] : model[service];
+  const normalizedMessage = message.replace(/\s+/g, ' ').trim();
   const parts = [prefix, service, selectedModel, to];
   if (servicesType.isCustom(service)) {
     const systemPrompt = system_role?.[service] || defaultOption.system_role;
     const userPrompt = user_role?.[service] || defaultOption.user_role;
-    const activeSummary = enablePageSummary ? getCurrentPageSummary() : '';
-    parts.push(systemPrompt, userPrompt, activeSummary);
+    parts.push(systemPrompt, userPrompt);
   }
-  parts.push(message);
+  parts.push(normalizedMessage);
   return parts.join('_');
 }
 

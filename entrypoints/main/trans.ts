@@ -19,10 +19,12 @@ import { detectlang, getCjkLanguageTag, throttle } from '@/entrypoints/utils/com
 import { getMainDomain, replaceCompatFn } from '@/entrypoints/main/compat';
 import { config } from '@/entrypoints/utils/config';
 import {
+  translateBatch,
   translateText,
   translateTextStream,
   cancelAllTranslations,
   incrementTranslationCount,
+  type BatchTranslationRequestItem,
 } from '@/entrypoints/utils/translateApi';
 import {
   buildPageContext,
@@ -81,6 +83,20 @@ const inFlightNodes = new Set<Element>();
 const records = new WeakMap<Element, TranslationRecord>();
 const activeRecords = new Set<TranslationRecord>();
 
+const AUTO_BATCH_WINDOW_MS = 25;
+const MAX_BATCH_ITEMS = 6;
+const MAX_BATCH_CHARS = 1800;
+
+interface PendingAutoItem {
+  context: TranslationContext;
+  origin: string;
+  cacheKey: string;
+  isBilingual: boolean;
+}
+
+let autoBatchQueue: HTMLElement[] = [];
+let autoBatchTimer: ReturnType<typeof setTimeout> | undefined;
+
 /** Kept for compatibility with callers that inspect the previous public map. */
 export const originalContents = new Map<string, string>();
 
@@ -125,14 +141,18 @@ function syncOwnedContent(context: TranslationContext): void {
   if (context.record) context.record.lastOwnedHTML = context.lastOwnedHTML;
 }
 
+function normalizeCacheSource(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
 // v2 includes inline <code> in translation input. Namespacing prevents an
 // older cached result, generated without that context, from being reused.
 function bilingualCacheKey(context: TranslationContext): string {
-  return `${BILINGUAL_CACHE_KEY_PREFIX}${context.sourceText}`;
+  return `${BILINGUAL_CACHE_KEY_PREFIX}${normalizeCacheSource(context.sourceText)}`;
 }
 
 function singleCacheKey(context: TranslationContext): string {
-  return `${SINGLE_CACHE_KEY_PREFIX}${context.sourceOuterHTML}`;
+  return `${SINGLE_CACHE_KEY_PREFIX}${normalizeCacheSource(context.requestHTML || context.sourceHTML)}`;
 }
 
 /** Move the original live children out before replacing innerHTML. */
@@ -440,9 +460,101 @@ function applyTranslatedHTML(context: TranslationContext, translated: string): b
   if (replace && matchingOuter) replace(element, text);
   else element.innerHTML = matchingOuter ? parsed.firstElementChild!.innerHTML : text;
   context.lastOwnedHTML = element.innerHTML;
-  void cache.localSet(singleCacheKey(context), element.outerHTML);
+  void cache.localSet(singleCacheKey(context), element.innerHTML);
   finishTranslated(context);
   return true;
+}
+
+function applyBilingualStreamChunk(context: TranslationContext, accumulated: string): void {
+  if (!accumulated?.trim()) return;
+  if (!contextIsCurrent(context)) return;
+  const element = context.element;
+  let streamNode = element.querySelector<HTMLElement>(`.${BILINGUAL_CONTENT_CLASS}`);
+  if (!streamNode) {
+    removeSpinner(context);
+    streamNode = appendBilingualContent(element, '');
+  }
+  setTranslationText(streamNode, accumulated);
+  syncOwnedContent(context);
+}
+
+function applyBilingualResult(context: TranslationContext, text: string): void {
+  if (!contextIsCurrent(context)) {
+    invalidateContext(context);
+    return;
+  }
+  const element = context.element;
+  if (!text?.trim()) {
+    clearBilingualOutput(element);
+    finishWithoutTranslation(context);
+    return;
+  }
+  removeSpinner(context);
+  if (!element.querySelector(`.${BILINGUAL_CONTENT_CLASS}`)) appendBilingualContent(element, text);
+  else {
+    const content = element.querySelector<HTMLElement>(`.${BILINGUAL_CONTENT_CLASS}`);
+    if (content) setTranslationText(content, text);
+  }
+  finishTranslated(context);
+}
+
+function applySingleStreamChunk(context: TranslationContext, accumulated: string): void {
+  if (!contextIsCurrent(context)) return;
+  const element = context.element;
+  removeSpinner(context);
+  const safeChunk = sanitizeTranslationHTML(accumulated, context.sourceHTML);
+  captureOriginalChildren(context);
+  const parsed = document.createElement('div');
+  parsed.innerHTML = safeChunk;
+  const matchingOuter =
+    parsed.firstElementChild &&
+    parsed.firstElementChild.tagName.toLowerCase() === element.tagName.toLowerCase() &&
+    parsed.childNodes.length === 1;
+  element.innerHTML = matchingOuter ? parsed.firstElementChild!.innerHTML : safeChunk;
+  syncOwnedContent(context);
+}
+
+function renderCachedBilingualResult(context: TranslationContext, cached: string): void {
+  const node = context.element;
+  context.spinner = insertLoadingSpinner(node, true);
+  markOwned(context.spinner);
+  setTimeout(() => {
+    if (!contextIsCurrent(context)) {
+      invalidateContext(context);
+      return;
+    }
+    removeSpinner(context);
+    try {
+      appendBilingualContent(node, cached);
+      finishTranslated(context);
+    } catch (error) {
+      finishFailed(context, error);
+    }
+  }, 250);
+}
+
+function renderCachedSingleResult(context: TranslationContext, cached: string): void {
+  const node = context.element;
+  context.spinner = insertLoadingSpinner(node, true);
+  markOwned(context.spinner);
+  setTimeout(() => {
+    if (!contextIsCurrent(context)) {
+      invalidateContext(context);
+      return;
+    }
+    removeSpinner(context);
+    try {
+      captureOriginalChildren(context);
+      if (!applyCachedHTML(node, cached, context.sourceHTML)) finishWithoutTranslation(context);
+      else {
+        context.lastOwnedHTML = node.innerHTML;
+        finishTranslated(context);
+      }
+    } catch (error) {
+      restoreAfterApplyFailure(context);
+      finishFailed(context, error);
+    }
+  }, 250);
 }
 
 function runBilingualTranslation(context: TranslationContext, forceBypassCache: boolean): void {
@@ -456,17 +568,7 @@ function runBilingualTranslation(context: TranslationContext, forceBypassCache: 
   context.spinner = insertLoadingSpinner(element);
   markOwned(context.spinner);
 
-  const onStreamChunk = (accumulated: string) => {
-    if (!accumulated?.trim()) return;
-    if (!contextIsCurrent(context)) return;
-    let streamNode = element.querySelector<HTMLElement>(`.${BILINGUAL_CONTENT_CLASS}`);
-    if (!streamNode) {
-      removeSpinner(context);
-      streamNode = appendBilingualContent(element, '');
-    }
-    setTranslationText(streamNode, accumulated);
-    syncOwnedContent(context);
-  };
+  const onStreamChunk = (accumulated: string) => applyBilingualStreamChunk(context, accumulated);
 
   if (config.enablePageSummary && servicesType.isUseModel(config.service) && !isAutoTranslating) {
     warmUpPageSummary();
@@ -483,24 +585,7 @@ function runBilingualTranslation(context: TranslationContext, forceBypassCache: 
       });
 
   request
-    .then((text) => {
-      if (!contextIsCurrent(context)) {
-        invalidateContext(context);
-        return;
-      }
-      if (!text?.trim()) {
-        clearBilingualOutput(element);
-        finishWithoutTranslation(context);
-        return;
-      }
-      removeSpinner(context);
-      if (!element.querySelector(`.${BILINGUAL_CONTENT_CLASS}`)) appendBilingualContent(element, text);
-      else {
-        const content = element.querySelector<HTMLElement>(`.${BILINGUAL_CONTENT_CLASS}`);
-        if (content) setTranslationText(content, text);
-      }
-      finishTranslated(context);
-    })
+    .then((text) => applyBilingualResult(context, text))
     .catch((error) => finishFailed(context, error));
 }
 
@@ -518,20 +603,7 @@ function runSingleTranslation(context: TranslationContext, forceBypassCache: boo
   context.spinner = insertLoadingSpinner(element);
   markOwned(context.spinner);
 
-  const onStreamChunk = (accumulated: string) => {
-    if (!contextIsCurrent(context)) return;
-    removeSpinner(context);
-    const safeChunk = sanitizeTranslationHTML(accumulated, context.sourceHTML);
-    captureOriginalChildren(context);
-    const parsed = document.createElement('div');
-    parsed.innerHTML = safeChunk;
-    const matchingOuter =
-      parsed.firstElementChild &&
-      parsed.firstElementChild.tagName.toLowerCase() === element.tagName.toLowerCase() &&
-      parsed.childNodes.length === 1;
-    element.innerHTML = matchingOuter ? parsed.firstElementChild!.innerHTML : safeChunk;
-    syncOwnedContent(context);
-  };
+  const onStreamChunk = (accumulated: string) => applySingleStreamChunk(context, accumulated);
 
   if (config.enablePageSummary && servicesType.isUseModel(config.service) && !isAutoTranslating) {
     warmUpPageSummary();
@@ -564,6 +636,11 @@ export function restoreOriginalContent(): void {
   isAutoTranslating = false;
   if (hoverTimer) clearTimeout(hoverTimer);
   hoverTimer = undefined;
+  if (autoBatchTimer) {
+    clearTimeout(autoBatchTimer);
+    autoBatchTimer = undefined;
+  }
+  autoBatchQueue = [];
   cancelAllTranslations();
   cancelSummaryRequest();
   clearCurrentPageSummary();
@@ -628,15 +705,222 @@ export function restoreOriginalContent(): void {
   nodeIdCounter = 0;
 }
 
+function runBatchGroup(group: PendingAutoItem[], isBilingual: boolean): void {
+  const segByCacheKey = new Map<
+    string,
+    { segId: number; origin: string; cacheKey: string; contexts: TranslationContext[] }
+  >();
+  const itemEntries: Array<{ item: PendingAutoItem; segId: number }> = [];
+  let nextSegId = 0;
+
+  for (const item of group) {
+    const normalizedKey = normalizeCacheSource(item.cacheKey);
+    let bucket = segByCacheKey.get(normalizedKey);
+    if (!bucket) {
+      bucket = {
+        segId: nextSegId++,
+        origin: item.origin,
+        cacheKey: item.cacheKey,
+        contexts: [],
+      };
+      segByCacheKey.set(normalizedKey, bucket);
+    }
+    bucket.contexts.push(item.context);
+    itemEntries.push({ item, segId: bucket.segId });
+  }
+
+  // If in-batch deduplication leaves only one unique text, fall back to the
+  // single-item path so in-flight deduplication handles all duplicates.
+  if (segByCacheKey.size === 1) {
+    for (const item of group) {
+      if (isBilingual) runBilingualTranslation(item.context, false);
+      else runSingleTranslation(item.context, false);
+    }
+    return;
+  }
+
+  for (const item of group) {
+    item.context.spinner = insertLoadingSpinner(item.context.element);
+    markOwned(item.context.spinner);
+  }
+
+  const batchContextInfo = buildPageContext(group[0].context.element, {
+    includePreceding: false,
+  });
+
+  const requestItems: BatchTranslationRequestItem[] = Array.from(segByCacheKey.values()).map(
+    (bucket) => ({
+      id: bucket.segId,
+      origin: bucket.origin,
+      cacheKey: bucket.cacheKey,
+      onChunk: (accumulated: string) => {
+        for (const ctx of bucket.contexts) {
+          if (isBilingual) applyBilingualStreamChunk(ctx, accumulated);
+          else applySingleStreamChunk(ctx, accumulated);
+        }
+      },
+    }),
+  );
+
+  translateBatch(requestItems, batchContextInfo)
+    .then((resultMap) => {
+      for (const { item, segId } of itemEntries) {
+        const ctx = item.context;
+        if (!contextIsCurrent(ctx)) {
+          invalidateContext(ctx);
+          continue;
+        }
+
+        const translated = resultMap.get(segId);
+        if (translated && translated.trim()) {
+          if (isBilingual) {
+            applyBilingualResult(ctx, translated);
+          } else {
+            try {
+              if (!applyTranslatedHTML(ctx, translated)) invalidateContext(ctx);
+            } catch (error) {
+              restoreAfterApplyFailure(ctx);
+              finishFailed(ctx, error);
+            }
+          }
+          continue;
+        }
+
+        // Graceful fallback for any segment omitted or malformed in the batch response
+        removeSpinner(ctx);
+        if (isBilingual) {
+          clearBilingualOutput(ctx.element);
+          syncOwnedContent(ctx);
+          runBilingualTranslation(ctx, false);
+        } else {
+          restoreAfterApplyFailure(ctx);
+          runSingleTranslation(ctx, false);
+        }
+      }
+    })
+    .catch((error) => {
+      for (const item of group) {
+        finishFailed(item.context, error);
+      }
+    });
+}
+
+async function flushAutoBatchQueue(generation: number): Promise<void> {
+  const elements = autoBatchQueue.splice(0);
+  if (!isAutoTranslating || generation !== sessionGeneration || elements.length === 0) return;
+
+  const isBilingual = config.display === styles.bilingualTranslation;
+  const candidates: PendingAutoItem[] = [];
+
+  for (const element of elements) {
+    if (!isAutoTranslating || generation !== sessionGeneration) return;
+    if (!element.isConnected) continue;
+    const context = beginContext(element, false);
+    if (!context) continue;
+
+    if (detectlang(context.sourceText.replace(/[\s\u3000]/g, '')) === config.to) {
+      finishWithoutTranslation(context);
+      continue;
+    }
+
+    const origin = isBilingual ? context.sourceText : context.requestHTML;
+    const cacheKey = isBilingual ? bilingualCacheKey(context) : singleCacheKey(context);
+    candidates.push({ context, origin, cacheKey, isBilingual });
+  }
+
+  if (candidates.length === 0) return;
+
+  const cachedResults = await Promise.all(
+    candidates.map((item) => cache.localGet(item.cacheKey)),
+  );
+
+  if (!isAutoTranslating || generation !== sessionGeneration) {
+    for (const item of candidates) invalidateContext(item.context);
+    return;
+  }
+
+  const uncached: PendingAutoItem[] = [];
+  for (let i = 0; i < candidates.length; i++) {
+    const item = candidates[i];
+    if (!contextIsCurrent(item.context)) {
+      invalidateContext(item.context);
+      continue;
+    }
+    const cached = cachedResults[i];
+    if (cached) {
+      if (item.isBilingual) renderCachedBilingualResult(item.context, cached);
+      else renderCachedSingleResult(item.context, cached);
+    } else {
+      uncached.push(item);
+    }
+  }
+
+  if (uncached.length === 0) return;
+
+  const groups: PendingAutoItem[][] = [];
+  let currentGroup: PendingAutoItem[] = [];
+  let currentChars = 0;
+
+  for (const item of uncached) {
+    if (item.origin.length > MAX_BATCH_CHARS) {
+      if (currentGroup.length > 0) {
+        groups.push(currentGroup);
+        currentGroup = [];
+        currentChars = 0;
+      }
+      groups.push([item]);
+      continue;
+    }
+
+    if (
+      currentGroup.length > 0 &&
+      (currentGroup.length >= MAX_BATCH_ITEMS || currentChars + item.origin.length > MAX_BATCH_CHARS)
+    ) {
+      groups.push(currentGroup);
+      currentGroup = [];
+      currentChars = 0;
+    }
+
+    currentGroup.push(item);
+    currentChars += item.origin.length;
+  }
+
+  if (currentGroup.length > 0) {
+    groups.push(currentGroup);
+  }
+
+  for (const group of groups) {
+    if (group.length === 1) {
+      const only = group[0];
+      if (only.isBilingual) runBilingualTranslation(only.context, false);
+      else runSingleTranslation(only.context, false);
+    } else {
+      runBatchGroup(group, isBilingual);
+    }
+  }
+}
+
 function dispatchAutoTranslation(element: HTMLElement, generation: number): void {
   if (!isAutoTranslating || generation !== sessionGeneration || !element.isConnected) return;
   if (element.hasAttribute(TRANSLATED_ATTR) || element.hasAttribute(TRANSLATED_ID_ATTR)) return;
   const record = createRecord(element, generation);
   if (!record) return;
-  if (config.display === styles.bilingualTranslation) {
-    handleBilingualTranslation(element, false);
-  } else {
-    handleSingleTranslation(element, false);
+
+  if (!servicesType.isUseModel(config.service)) {
+    if (config.display === styles.bilingualTranslation) {
+      handleBilingualTranslation(element, false);
+    } else {
+      handleSingleTranslation(element, false);
+    }
+    return;
+  }
+
+  autoBatchQueue.push(element);
+  if (!autoBatchTimer) {
+    autoBatchTimer = setTimeout(() => {
+      autoBatchTimer = undefined;
+      void flushAutoBatchQueue(generation);
+    }, AUTO_BATCH_WINDOW_MS);
   }
 }
 
@@ -790,21 +1074,7 @@ export function handleBilingualTranslation(
   const context = beginContext(node, forceBypassCache);
   if (!context) return;
   void applyCachedOrTranslate(context, forceBypassCache, bilingualCacheKey(context), (cached) => {
-    context.spinner = insertLoadingSpinner(node, true);
-    markOwned(context.spinner);
-    setTimeout(() => {
-      if (!contextIsCurrent(context)) {
-        invalidateContext(context);
-        return;
-      }
-      removeSpinner(context);
-      try {
-        appendBilingualContent(node, cached);
-        finishTranslated(context);
-      } catch (error) {
-        finishFailed(context, error);
-      }
-    }, 250);
+    renderCachedBilingualResult(context, cached);
   }, () => {
     runBilingualTranslation(context, forceBypassCache);
   });
@@ -818,26 +1088,7 @@ export function handleSingleTranslation(
   const context = beginContext(node, forceBypassCache);
   if (!context) return;
   void applyCachedOrTranslate(context, forceBypassCache, singleCacheKey(context), (cached) => {
-    context.spinner = insertLoadingSpinner(node, true);
-    markOwned(context.spinner);
-    setTimeout(() => {
-      if (!contextIsCurrent(context)) {
-        invalidateContext(context);
-        return;
-      }
-      removeSpinner(context);
-      try {
-        captureOriginalChildren(context);
-        if (!applyCachedHTML(node, cached, context.sourceHTML)) finishWithoutTranslation(context);
-        else {
-          context.lastOwnedHTML = node.innerHTML;
-          finishTranslated(context);
-        }
-      } catch (error) {
-        restoreAfterApplyFailure(context);
-        finishFailed(context, error);
-      }
-    }, 250);
+    renderCachedSingleResult(context, cached);
   }, () => {
     runSingleTranslation(context, forceBypassCache);
   });

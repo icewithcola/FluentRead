@@ -263,8 +263,12 @@ function findPrecedingSnippet(element: Element): string {
  * Build zero-latency structural context (title, site, meta, section breadcrumb,
  * and immediate preceding text) to help the LLM disambiguate terminology.
  */
-export function buildPageContext(element?: Element | null): string {
+export function buildPageContext(
+  element?: Element | null,
+  options: { includePreceding?: boolean } = {},
+): string {
   if (typeof document === 'undefined') return '';
+  const { includePreceding = true } = options;
   const lines: string[] = [];
 
   const title = document.title?.replace(/\s+/g, ' ').trim();
@@ -280,8 +284,10 @@ export function buildPageContext(element?: Element | null): string {
   if (element) {
     const section = findSectionBreadcrumb(element);
     if (section) lines.push(`Section: ${section}`);
-    const preceding = findPrecedingSnippet(element);
-    if (preceding) lines.push(`Preceding text: ${preceding}`);
+    if (includePreceding) {
+      const preceding = findPrecedingSnippet(element);
+      if (preceding) lines.push(`Preceding text: ${preceding}`);
+    }
   }
 
   return lines.join('\n');

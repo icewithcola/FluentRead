@@ -34,6 +34,77 @@ export function formatTargetLanguageForPrompt(langCode: string): string {
   return PROMPT_LANGUAGE_NAMES[langCode] || langCode;
 }
 
+const BATCH_SEGMENT_MARKER_TEST_RE = /\[\[@FR_SEG_\d+@\]\]/;
+const BATCH_SEGMENT_MARKER_SPLIT_RE = /(\[\[@FR_SEG_\d+@\]\])/;
+
+/**
+ * Split structural page context into cache-friendly layers ordered from
+ * page-static (document meta) to section-semi-static to paragraph-dynamic.
+ */
+function splitPageContext(pageContext?: string): {
+  documentMeta: string;
+  sectionContext: string;
+  precedingContext: string;
+} {
+  if (!pageContext?.trim()) {
+    return { documentMeta: '', sectionContext: '', precedingContext: '' };
+  }
+
+  const docLines: string[] = [];
+  const sectionLines: string[] = [];
+  const precedingLines: string[] = [];
+
+  for (const rawLine of pageContext.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (line.startsWith('Section:')) {
+      sectionLines.push(line);
+    } else if (line.startsWith('Preceding text:')) {
+      precedingLines.push(line);
+    } else {
+      docLines.push(line);
+    }
+  }
+
+  return {
+    documentMeta: docLines.join('\n'),
+    sectionContext: sectionLines.join('\n'),
+    precedingContext: precedingLines.join('\n'),
+  };
+}
+
+/**
+ * Collapse redundant indentation whitespace in source text while keeping
+ * batch segment markers on their own lines.
+ */
+function normalizePromptOrigin(origin: string): string {
+  if (!BATCH_SEGMENT_MARKER_TEST_RE.test(origin)) {
+    return origin.replace(/\s+/g, ' ').trim();
+  }
+
+  const parts = origin.split(BATCH_SEGMENT_MARKER_SPLIT_RE);
+  const lines: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (!part) continue;
+    if (BATCH_SEGMENT_MARKER_TEST_RE.test(part)) {
+      const next = parts[i + 1];
+      const normalizedSegment =
+        next && !BATCH_SEGMENT_MARKER_TEST_RE.test(next) ? next.replace(/\s+/g, ' ').trim() : '';
+      if (normalizedSegment) {
+        lines.push(`${part}\n${normalizedSegment}`);
+        i++;
+      } else {
+        lines.push(part);
+      }
+    } else {
+      const normalized = part.replace(/\s+/g, ' ').trim();
+      if (normalized) lines.push(normalized);
+    }
+  }
+  return lines.join('\n');
+}
+
 // openai 格式的消息模板（通用模板）
 // pageSummary: optional page summary context to inject into the prompt for better translation
 // pageContext: optional structural page/section/preceding context for disambiguation
@@ -46,34 +117,40 @@ export function commonMsgTemplate(
   const targetLanguage = formatTargetLanguageForPrompt(config.to);
 
   // 规范化原文：将 HTML 缩进产生的连续空白（换行/制表符/连续空格）折叠为单个空格，
-  // 并去除首尾空白，避免这些无关空白被模型原样带入译文内容
-  const cleanedOrigin = origin.replace(/\s+/g, ' ').trim();
+  // 并去除首尾空白，避免这些无关空白被模型原样带入译文内容；批量分段标记保留独立成行
+  const cleanedOrigin = normalizePromptOrigin(origin);
 
   let user = (config.user_role[config.service] || defaultOption.user_role)
     .replace(/\{\{to\}\}/g, () => targetLanguage)
     .replace(/\{\{origin\}\}/g, () => cleanedOrigin);
 
-  // Inject format-specific guardrails based on whether source contains inline HTML or code/math markers
-  const hasHtmlTags = /<\/?[a-z][\s\S]*?>/i.test(cleanedOrigin);
-  if (hasHtmlTags) {
-    system += `\n\nFormatting & terminology rules:\n- The source contains inline HTML tags (e.g. <a>, <code>, <strong>, <em>, <span>, <kbd>, <samp>, <var>). Preserve all HTML tags, nesting order, and attributes intact.\n- Translate ONLY the natural-language text inside tags. NEVER translate or alter code identifiers, commands, or formulas inside <code>, <kbd>, <samp>, or <var> tags.`;
-  } else if (/`[^`]+`|\$[^$]+\$/.test(cleanedOrigin)) {
-    system += `\n\nFormatting & terminology rules:\n- Keep inline code wrapped in backticks (\`...\`) and mathematical expressions ($...$) in their exact original form; do not translate code identifiers, variable names, API symbols, or CLI flags.`;
+  // Layer 2: Global static formatting, terminology, and batch segmentation rules
+  system += `\n\nFormatting & terminology rules:\n- If the source contains inline HTML tags (e.g. <a>, <code>, <strong>, <em>, <span>, <kbd>, <samp>, <var>), preserve all HTML tags, nesting order, and attributes intact, and translate ONLY the natural-language text inside tags. If the source is plain text without HTML tags, output plain text only and never invent HTML tags.\n- Keep inline code wrapped in backticks (\`...\`), mathematical expressions ($...$), and content inside <code>, <kbd>, <samp>, or <var> tags in their exact original form; NEVER translate or alter code identifiers, variable names, API symbols, commands, CLI flags, or formulas.\n- If the source contains batch segment markers ([[@FR_SEG_0@]], [[@FR_SEG_1@]], ...), translate each segment independently in order and keep the exact same [[@FR_SEG_N@]] marker before each corresponding translated segment. Never merge, omit, reorder, or add segment markers.`;
+
+  // Layer 3: Page-static document metadata (Title / Site / Meta)
+  const { documentMeta, sectionContext, precedingContext } = splitPageContext(pageContext);
+  if (documentMeta) {
+    system += `\n\nDocument metadata (for domain disambiguation and terminology consistency only; NEVER translate or output this metadata):\n${documentMeta}`;
+  }
+
+  // Layer 4: Page-static domain summary & terminology glossary (before per-section/per-paragraph context)
+  if (pageSummary?.trim()) {
+    system += `\n\nPage domain summary & terminology glossary (strictly follow these term translations for consistency):\n${pageSummary.trim()}`;
+  }
+
+  // Layer 5: Section-semi-static context
+  if (sectionContext) {
+    system += `\n\nCurrent section context (for disambiguation only; NEVER translate or output this context):\n${sectionContext}`;
+  }
+
+  // Layer 6: Paragraph-dynamic context & Cantonese note at the very end to preserve prefix caching
+  if (precedingContext) {
+    system += `\n\nPreceding text context (for pronoun resolution and flow only; NEVER translate or output this context):\n${precedingContext}`;
   }
 
   // 如果是粤语，注入专属的粤语理解与意译Prompt
   if (isCantonese(origin)) {
     system += `\n\nNote: The source text is written in Cantonese (粤语/广东话) and may contain Cantonese slang, colloquial grammar, and internet abbreviations (e.g. 'po' means post/帖子, '劈' means drinking/chugging, etc.). Do NOT perform a word-for-word literal translation. Instead, fully understand the meaning, slang, and context of the Cantonese text, and translate it into standard, natural, and idiomatic ${targetLanguage}.`;
-  }
-
-  // Inject structural page & section context if available
-  if (pageContext?.trim()) {
-    system += `\n\nDocument & section context (for domain disambiguation, terminology consistency, and pronoun resolution only; NEVER translate or output this context):\n${pageContext.trim()}`;
-  }
-
-  // Inject page summary context into the system prompt if available
-  if (pageSummary?.trim()) {
-    system += `\n\nPage domain summary & terminology glossary (strictly follow these term translations for consistency):\n${pageSummary.trim()}`;
   }
 
   const body: OpenAiRequest = {
