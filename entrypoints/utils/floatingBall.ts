@@ -1,7 +1,6 @@
 import { createApp } from 'vue';
 import FloatingBall from '@/components/FloatingBall.vue';
 import { config } from '@/entrypoints/utils/config';
-import browser from 'webextension-polyfill';
 import { storage } from '@wxt-dev/storage';
 import { autoTranslateEnglishPage, restoreOriginalContent } from '@/entrypoints/main/trans';
 
@@ -128,9 +127,6 @@ export function mountFloatingBall(position?: 'left' | 'right') {
     position: ballPosition,
     showMenu: true,
     onDocClick: () => {},
-    onSettingsClick: () => {
-      browser.runtime.sendMessage({ type: 'openOptionsPage' });
-    },
     // 添加位置变化事件监听
     onPositionChanged: (newPosition: 'left' | 'right') => {
       // 保存位置到配置

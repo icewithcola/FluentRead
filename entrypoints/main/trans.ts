@@ -15,7 +15,9 @@ import {
   hasActiveTranslatedAncestor,
   isVisible,
   LLMStandardHTML,
+  getTranslatableInlineCodeValues,
   getTranslatableText,
+  normalizeInlineCodeKey,
   restoreTruncationStyle,
   sanitizeTranslationHTML,
   SCOPED_ATTR,
@@ -70,6 +72,7 @@ export interface BilingualToken {
 interface BilingualFormatHint {
   allowBold: boolean;
   allowCode: boolean;
+  allowedCodeValues?: ReadonlySet<string>;
 }
 
 interface TranslationRecord {
@@ -86,7 +89,7 @@ interface TranslationRecord {
   boundary: Element | null;
   groupInfo: StructuredGroupInfo | null;
   sourceHasBold: boolean;
-  sourceHasCode: boolean;
+  sourceCodeValues: ReadonlySet<string>;
   originalFragment?: DocumentFragment;
   preservedLeadingControls?: Node[];
 }
@@ -104,7 +107,7 @@ interface TranslationContext {
   boundary: Element | null;
   groupInfo: StructuredGroupInfo | null;
   sourceHasBold: boolean;
-  sourceHasCode: boolean;
+  sourceCodeValues: ReadonlySet<string>;
   spinner?: HTMLElement;
   originalFragment?: DocumentFragment;
   preservedLeadingControls?: Node[];
@@ -401,7 +404,7 @@ function createRecord(element: Element, generation: number): TranslationRecord |
     boundary,
     groupInfo: getStructuredGroupInfo(element),
     sourceHasBold: isLlm && /\*\*[^*]+\*\*/.test(originalText),
-    sourceHasCode: /`[^`]+`/.test(originalText),
+    sourceCodeValues: getTranslatableInlineCodeValues(element),
   };
   records.set(element, record);
   activeRecords.add(record);
@@ -470,7 +473,7 @@ function beginContext(element: HTMLElement, forceRetry = false): TranslationCont
     boundary,
     groupInfo: record ? record.groupInfo : getStructuredGroupInfo(element),
     sourceHasBold: record ? record.sourceHasBold : isLlm && /\*\*[^*]+\*\*/.test(sourceText),
-    sourceHasCode: record ? record.sourceHasCode : /`[^`]+`/.test(sourceText),
+    sourceCodeValues: record ? record.sourceCodeValues : getTranslatableInlineCodeValues(element),
   };
   return context;
 }
@@ -546,20 +549,24 @@ function finishFailed(context: TranslationContext, error: unknown): void {
   }
 }
 
-function formatHintForContext(context: Pick<TranslationContext, 'sourceHasBold' | 'sourceHasCode'>): BilingualFormatHint {
+function formatHintForContext(
+  context: Pick<TranslationContext, 'sourceHasBold' | 'sourceCodeValues'>,
+): BilingualFormatHint {
   return {
     allowBold: context.sourceHasBold,
-    allowCode: context.sourceHasCode,
+    allowCode: context.sourceCodeValues.size > 0,
+    allowedCodeValues: context.sourceCodeValues,
   };
 }
 
 export function tokenizeBilingualFormatting(
   text: string,
-  options: { allowBold: boolean; allowCode: boolean },
+  options: { allowBold: boolean; allowCode: boolean; allowedCodeValues?: ReadonlySet<string> },
 ): BilingualToken[] {
   if (!text) return [];
-  const { allowBold, allowCode } = options;
-  if (!allowBold && !allowCode) return [{ type: 'text', value: text }];
+  const { allowBold, allowCode, allowedCodeValues } = options;
+  const effectiveAllowCode = allowCode && (!allowedCodeValues || allowedCodeValues.size > 0);
+  if (!allowBold && !effectiveAllowCode) return [{ type: 'text', value: text }];
 
   const tokens: BilingualToken[] = [];
   let textBuf = '';
@@ -574,12 +581,18 @@ export function tokenizeBilingualFormatting(
   while (i < text.length) {
     const ch = text[i];
 
-    // Keep $...$ inline math expressions untouched as plain text while not swallowing $100 ... $200 currency spans.
+    // Keep $...$ inline math expressions untouched as plain text while not swallowing $50 ... $100 currency spans.
     if (ch === '$') {
       const closeDollar = text.indexOf('$', i + 1);
       if (closeDollar > i) {
         const inner = text.slice(i + 1, closeDollar);
-        if (!inner.includes('\n') && !/^\d+(?:\.\d+)?\s/.test(inner)) {
+        if (
+          inner.length > 0 &&
+          !inner.includes('\n') &&
+          !inner.includes('`') &&
+          !/^\s|\s$/.test(inner) &&
+          !/^\d+(?:\.\d+)?(?:[\s,.;:!?，。；：！？、）)）]|$)/.test(inner)
+        ) {
           textBuf += text.slice(i, closeDollar + 1);
           i = closeDollar + 1;
           continue;
@@ -587,15 +600,28 @@ export function tokenizeBilingualFormatting(
       }
     }
 
-    if (allowCode && ch === '`') {
-      const closeTick = text.indexOf('`', i + 1);
-      if (closeTick > i + 1) {
-        const codeVal = text.slice(i + 1, closeTick);
-        if (!codeVal.includes('\n') && codeVal.length <= 100) {
-          flushText();
-          tokens.push({ type: 'code', value: codeVal });
-          i = closeTick + 1;
-          continue;
+    if (ch === '`') {
+      if (text[i + 1] === '`') {
+        let endRun = i + 2;
+        while (endRun < text.length && text[endRun] === '`') endRun++;
+        textBuf += text.slice(i, endRun);
+        i = endRun;
+        continue;
+      }
+      if (effectiveAllowCode) {
+        const closeTick = text.indexOf('`', i + 1);
+        if (closeTick > i + 1 && text[closeTick + 1] !== '`') {
+          const codeVal = text.slice(i + 1, closeTick);
+          if (
+            !codeVal.includes('\n') &&
+            codeVal.length <= 100 &&
+            (!allowedCodeValues || allowedCodeValues.has(normalizeInlineCodeKey(codeVal)))
+          ) {
+            flushText();
+            tokens.push({ type: 'code', value: codeVal });
+            i = closeTick + 1;
+            continue;
+          }
         }
       }
     }
@@ -720,7 +746,38 @@ function appendBilingualContent(
   return content;
 }
 
-function setTranslationText(
+function appendInlineTokens(
+  parent: HTMLElement,
+  tokens: BilingualToken[],
+  allowNestedCode: boolean,
+  allowedCodeValues?: ReadonlySet<string>,
+): void {
+  for (const token of tokens) {
+    if (token.type === 'bold') {
+      const strong = document.createElement('strong');
+      if (allowNestedCode && token.value.includes('`')) {
+        const nestedTokens = tokenizeBilingualFormatting(token.value, {
+          allowBold: false,
+          allowCode: true,
+          allowedCodeValues,
+        });
+        appendInlineTokens(strong, nestedTokens, false, allowedCodeValues);
+      } else {
+        strong.textContent = token.value;
+      }
+      parent.appendChild(strong);
+    } else if (token.type === 'code') {
+      const code = document.createElement('code');
+      code.className = 'fluent-read-inline-code';
+      code.textContent = token.value;
+      parent.appendChild(code);
+    } else {
+      parent.appendChild(document.createTextNode(token.value));
+    }
+  }
+}
+
+export function setTranslationText(
   content: HTMLElement,
   text: string,
   formatHint?: BilingualFormatHint,
@@ -733,20 +790,7 @@ function setTranslationText(
 
   const tokens = tokenizeBilingualFormatting(text, formatHint);
   while (content.firstChild) content.firstChild.remove();
-  for (const token of tokens) {
-    if (token.type === 'bold') {
-      const strong = document.createElement('strong');
-      strong.textContent = token.value;
-      content.appendChild(strong);
-    } else if (token.type === 'code') {
-      const code = document.createElement('code');
-      code.className = 'fluent-read-inline-code';
-      code.textContent = token.value;
-      content.appendChild(code);
-    } else {
-      content.appendChild(document.createTextNode(token.value));
-    }
-  }
+  appendInlineTokens(content, tokens, formatHint.allowCode, formatHint.allowedCodeValues);
 }
 
 function stabilizeTranslationPlacement(content: HTMLElement, host: HTMLElement): void {
@@ -1031,6 +1075,7 @@ function runBilingualTranslation(context: TranslationContext, forceBypassCache: 
         bypassCacheRead: forceBypassCache,
         cacheKey: bilingualCacheKey(context),
         isListSlot,
+        onChunk: onStreamChunk,
       });
 
   request
@@ -1069,6 +1114,7 @@ function runSingleTranslation(context: TranslationContext, forceBypassCache: boo
         bypassCacheRead: forceBypassCache,
         cacheKey: singleCacheKey(context),
         isListSlot,
+        onChunk: onStreamChunk,
       });
 
   request
@@ -1118,7 +1164,7 @@ export function restoreOriginalContent(): void {
       boundary: record.boundary,
       groupInfo: record.groupInfo,
       sourceHasBold: record.sourceHasBold,
-      sourceHasCode: record.sourceHasCode,
+      sourceCodeValues: record.sourceCodeValues,
       preservedLeadingControls: record.preservedLeadingControls,
     };
     const activeBoundary = getActiveBoundary(context);

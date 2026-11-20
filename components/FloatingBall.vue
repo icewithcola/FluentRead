@@ -59,10 +59,6 @@ const props = defineProps({
     type: Function as PropType<(event: MouseEvent) => void>,
     default: () => {},
   },
-  onSettingsClick: {
-    type: Function as PropType<(event: MouseEvent) => void>,
-    default: () => {},
-  },
   onPositionChanged: {
     type: Function as PropType<(newPosition: 'left' | 'right') => void>,
     default: () => {},
@@ -206,11 +202,6 @@ const stopDrag = (event: MouseEvent) => {
 const handleDocClick = (event: MouseEvent) => {
   event.stopPropagation();
   props.onDocClick(event);
-};
-
-const handleSettingsClick = (event: MouseEvent) => {
-  event.stopPropagation();
-  props.onSettingsClick(event);
 };
 
 // 新增：添加波纹效果

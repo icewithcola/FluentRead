@@ -62,11 +62,73 @@ export function openAiRequestBody(endpoint: string, request: OpenAiRequest): str
   return JSON.stringify({ model, input: messages, stream, store: false });
 }
 
+export const TRANSLATION_TRUNCATED_CODE = 'TRUNCATED';
+
+const TRUNCATED_FINISH_REASONS = new Set(['length', 'max_tokens', 'max_output_tokens']);
+
+export class TranslationTruncatedError extends Error {
+  readonly code = TRANSLATION_TRUNCATED_CODE;
+
+  constructor(message = '翻译结果超出模型输出长度上限而被截断') {
+    super(message);
+    this.name = 'TranslationTruncatedError';
+  }
+}
+
+export function isTranslationTruncatedError(error: unknown): boolean {
+  return (
+    error instanceof TranslationTruncatedError ||
+    (error instanceof Error && (error as { code?: unknown }).code === TRANSLATION_TRUNCATED_CODE)
+  );
+}
+
+export function isTruncatedFinishReason(reason: unknown): boolean {
+  return typeof reason === 'string' && TRUNCATED_FINISH_REASONS.has(reason.trim().toLowerCase());
+}
+
+export function extractOpenAiFinishReason(result: any): string | undefined {
+  const chatReason = result?.choices?.[0]?.finish_reason;
+  if (typeof chatReason === 'string' && chatReason.trim()) {
+    return chatReason.trim().toLowerCase();
+  }
+
+  const stopReason = result?.stop_reason;
+  if (typeof stopReason === 'string' && stopReason.trim()) {
+    return stopReason.trim().toLowerCase();
+  }
+
+  if (
+    result?.type === 'response.incomplete' ||
+    result?.status === 'incomplete' ||
+    result?.response?.status === 'incomplete'
+  ) {
+    const incompleteReason =
+      result?.incomplete_details?.reason ?? result?.response?.incomplete_details?.reason;
+    if (typeof incompleteReason === 'string' && incompleteReason.trim()) {
+      return incompleteReason.trim().toLowerCase();
+    }
+    return 'length';
+  }
+
+  if (
+    result?.type === 'response.completed' ||
+    result?.status === 'completed' ||
+    result?.response?.status === 'completed'
+  ) {
+    return 'stop';
+  }
+
+  return undefined;
+}
+
 export function isOpenAiResponseTruncated(result: any): boolean {
-  const finishReason = result?.choices?.[0]?.finish_reason;
-  if (finishReason === 'length') return true;
-  if (result?.status === 'incomplete') return true;
-  return false;
+  const finishReason = extractOpenAiFinishReason(result);
+  if (isTruncatedFinishReason(finishReason)) return true;
+  return (
+    result?.status === 'incomplete' ||
+    result?.type === 'response.incomplete' ||
+    result?.response?.status === 'incomplete'
+  );
 }
 
 export function openAiResponseText(result: any): string {

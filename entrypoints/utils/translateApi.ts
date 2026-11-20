@@ -22,25 +22,48 @@ import { storage } from '@wxt-dev/storage';
 import { servicesType } from './option';
 import { buildPageContext, getCurrentPageSummary, warmUpPageSummary } from './pageSummary';
 import { TRANSLATION_COUNT_KEY, normalizeTranslationCount } from './constant';
+import {
+  isTranslationTruncatedError,
+  isTruncatedFinishReason,
+  TRANSLATION_TRUNCATED_CODE,
+} from './openai';
 
 const isDev = process.env.NODE_ENV === 'development';
 
-interface InFlightStreamEntry {
+interface InFlightEntry {
   promise: Promise<string>;
   listeners: Set<(accumulated: string) => void>;
   latestAccumulated: string;
 }
 
-const inFlightTranslations = new Map<string, Promise<string>>();
-const inFlightStreamTranslations = new Map<string, InFlightStreamEntry>();
+const inFlightTranslations = new Map<string, InFlightEntry>();
 
 function buildInFlightKey(cacheKey: string): string {
   return `${config.service}:${config.to}:${cacheKey.replace(/\s+/g, ' ').trim()}`;
 }
 
+function attachInFlight(
+  entry: InFlightEntry,
+  onChunk?: (accumulated: string) => void,
+): Promise<string> {
+  if (onChunk) {
+    entry.listeners.add(onChunk);
+    if (entry.latestAccumulated) {
+      try {
+        onChunk(entry.latestAccumulated);
+      } catch {
+        // Isolate replay errors from detached callers
+      }
+    }
+  }
+  return entry.promise;
+}
+
 const TRUNCATION_CHECK_MIN_SOURCE_CHARS = 2000;
 const TRUNCATION_MIN_LENGTH_RATIO = 0.25;
 const MAX_TRANSLATION_CHUNK_CHARS = 3500;
+const MIN_TRUNCATION_SPLIT_CHARS = 600;
+const MAX_TRUNCATION_SPLIT_DEPTH = 2;
 
 const HTML_VOID_TAGS = new Set([
   'area',
@@ -351,6 +374,11 @@ function wait(delay: number, signal: AbortSignal): Promise<void> {
 
 const TRANSLATE_PORT = 'stream-translate';
 
+interface PortTranslationResult {
+  text: string;
+  finishReason?: string;
+}
+
 /** Runtime Port used for both streaming and non-streaming translation. Disconnect aborts fetch(). */
 function requestViaPort(
   payload: { context: string; origin: string; pageSummary?: string },
@@ -358,8 +386,8 @@ function requestViaPort(
   timeout: number,
   labels: { timeout: string; disconnect: string; failure: string; invalid: string },
   onChunk?: (accumulated: string) => void,
-): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
+): Promise<PortTranslationResult> {
+  return new Promise<PortTranslationResult>((resolve, reject) => {
     let port: browser.Runtime.Port | undefined;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let settled = false;
@@ -402,7 +430,9 @@ function requestViaPort(
       }
 
       if (message?.type === 'stream-error') {
-        settle(() => reject(new Error(message.error || labels.failure)));
+        const err = new Error(message.error || labels.failure) as Error & { code?: string };
+        if (typeof message.code === 'string') err.code = message.code;
+        settle(() => reject(err));
         return;
       }
 
@@ -420,7 +450,17 @@ function requestViaPort(
         settle(() => reject(new Error(labels.invalid)));
         return;
       }
-      settle(() => resolve(result || ''));
+      const finishReason =
+        typeof message.finishReason === 'string' && message.finishReason.trim()
+          ? message.finishReason.trim().toLowerCase()
+          : undefined;
+      if (isTruncatedFinishReason(finishReason)) {
+        const err = new Error('翻译结果超出模型输出长度上限而被截断') as Error & { code?: string };
+        err.code = TRANSLATION_TRUNCATED_CODE;
+        settle(() => reject(err));
+        return;
+      }
+      settle(() => resolve({ text: result || '', finishReason }));
     };
 
     const onDisconnect = () => {
@@ -473,21 +513,23 @@ async function flushTranslationCount(): Promise<void> {
   }
 }
 
-/** Unified non-streaming translation entry point. */
-export async function translateText(
+async function runChunkedTranslation(
   origin: string,
-  context: string = typeof document === 'undefined' ? '' : buildPageContext(),
+  context: string,
+  stream: boolean,
+  onChunk?: (accumulated: string) => void,
   options: TranslateOptions = {},
 ): Promise<string> {
   const {
     maxRetries = 3,
     retryDelay = 1000,
-    timeout = 45000,
+    timeout = stream ? 60000 : 45000,
     useCache = config.useCache,
     bypassCacheRead = false,
     cacheKey = origin,
     isListSlot = false,
   } = options;
+  const effectiveOnChunk = onChunk ?? options.onChunk;
   const retryLimit = Number.isFinite(Number(maxRetries))
     ? Math.max(0, Math.floor(Number(maxRetries)))
     : 0;
@@ -499,7 +541,7 @@ export async function translateText(
   const inFlightKey = shouldDedupe ? buildInFlightKey(cacheKey) : '';
   if (shouldDedupe) {
     const existing = inFlightTranslations.get(inFlightKey);
-    if (existing) return existing;
+    if (existing) return attachInFlight(existing, effectiveOnChunk);
   }
 
   if (shouldDedupe) {
@@ -507,82 +549,272 @@ export async function translateText(
     if (cachedResult) return cachedResult;
 
     const existingAfterCache = inFlightTranslations.get(inFlightKey);
-    if (existingAfterCache) return existingAfterCache;
+    if (existingAfterCache) return attachInFlight(existingAfterCache, effectiveOnChunk);
   }
 
   if (config.enablePageSummary && servicesType.isUseModel(config.service)) {
     warmUpPageSummary();
   }
 
-  const chunks = splitIntoTranslationChunks(origin);
+  const chunks = splitIntoTranslationChunks(origin).filter((chunk) => chunk.trim().length > 0);
+  if (chunks.length === 0) return '';
 
-  const taskPromise = enqueueTranslation(async (signal) => {
-    throwIfAborted(signal);
+  const listeners = new Set<(accumulated: string) => void>();
+  if (effectiveOnChunk) listeners.add(effectiveOnChunk);
+  const entry: InFlightEntry = {
+    promise: Promise.resolve(''),
+    listeners,
+    latestAccumulated: '',
+  };
 
-    const attempt = async (chunkOrigin: string, retryCount: number): Promise<string> => {
-      throwIfAborted(signal);
-      try {
+  const labels = stream
+    ? {
+        timeout: '流式翻译请求超时',
+        disconnect: '流式翻译连接意外断开',
+        failure: '流式翻译失败',
+        invalid: '流式翻译返回了无效的响应格式',
+      }
+    : {
+        timeout: '翻译请求超时',
+        disconnect: '翻译连接意外断开',
+        failure: '翻译失败',
+        invalid: '翻译返回了无效的响应格式',
+      };
+
+  const runChunks = async (): Promise<string> => {
+    const groupController = new AbortController();
+    let firstError: unknown = null;
+    const completed: Array<string | undefined> = new Array(chunks.length).fill(undefined);
+    const partials: string[] = new Array(chunks.length).fill('');
+    const chunkConfirmedByFinishReason: boolean[] = new Array(chunks.length).fill(false);
+    let lastEmitted = '';
+
+    const emitProgress = () => {
+      let prefix = '';
+      let i = 0;
+      while (i < chunks.length && completed[i] !== undefined) {
+        const doneChunk = completed[i];
+        if (doneChunk) prefix = appendTranslatedChunk(prefix, doneChunk);
+        i++;
+      }
+      if (i === chunks.length) return;
+      if (partials[i]) {
+        prefix = appendTranslatedChunk(prefix, partials[i]);
+      }
+      if (!prefix || prefix === lastEmitted) return;
+      lastEmitted = prefix;
+      entry.latestAccumulated = prefix;
+      for (const listener of entry.listeners) {
+        try {
+          listener(prefix);
+        } catch {
+          // Isolate listener errors from other subscribers sharing this translation
+        }
+      }
+    };
+
+    const requestLeafChunk = async (
+      chunkOrigin: string,
+      signal: AbortSignal,
+      onLeafPartial?: (accumulated: string) => void,
+    ): Promise<PortTranslationResult> => {
+      if (stream) {
         const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
         const result = await requestViaPort(
           { context, origin: chunkOrigin, pageSummary },
           signal,
           timeout,
-          {
-            timeout: '翻译请求超时',
-            disconnect: '翻译连接意外断开',
-            failure: '翻译失败',
-            invalid: '翻译返回了无效的响应格式',
-          },
+          labels,
+          onLeafPartial,
         );
-        if (!result) return '';
-        assertTranslationComplete(chunkOrigin, result);
-        return result;
-      } catch (error) {
-        if (isCancelled(signal, error)) throw error;
-        if (retryCount >= retryLimit) throw error;
-        if (isDev) {
-          console.log(`[翻译API] 翻译失败，${retryCount + 1}/${retryLimit} 次重试，原因:`, error);
+        if (result.text && !result.finishReason) {
+          assertTranslationComplete(chunkOrigin, result.text);
         }
-        await wait(retryInterval, signal);
-        return attempt(chunkOrigin, retryCount + 1);
+        return result;
+      }
+
+      const attempt = async (retryCount: number): Promise<PortTranslationResult> => {
+        throwIfAborted(signal);
+        try {
+          const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
+          const result = await requestViaPort(
+            { context, origin: chunkOrigin, pageSummary },
+            signal,
+            timeout,
+            labels,
+          );
+          if (!result.text) return { text: '', finishReason: result.finishReason };
+          if (!result.finishReason) {
+            assertTranslationComplete(chunkOrigin, result.text);
+          }
+          return result;
+        } catch (error) {
+          if (isCancelled(signal, error) || isTranslationTruncatedError(error)) throw error;
+          if (retryCount >= retryLimit) throw error;
+          if (isDev) {
+            console.log(`[翻译API] 翻译失败，${retryCount + 1}/${retryLimit} 次重试，原因:`, error);
+          }
+          await wait(retryInterval, signal);
+          return attempt(retryCount + 1);
+        }
+      };
+
+      return attempt(0);
+    };
+
+    const translateChunkWithSplit = async (
+      chunkOrigin: string,
+      signal: AbortSignal,
+      isFirstOverall: boolean,
+      depth: number,
+      onPartial?: (partialText: string) => void,
+    ): Promise<{ text: string; confirmedByFinishReason: boolean }> => {
+      throwIfAborted(signal);
+      try {
+        const result = await requestLeafChunk(chunkOrigin, signal, (rawAccumulated) => {
+          if (!onPartial) return;
+          const sanitized = isFirstOverall
+            ? stripSpuriousListMarker(origin, rawAccumulated, isListSlot, true)
+            : rawAccumulated;
+          if (sanitized) onPartial(sanitized);
+        });
+        const finalText = isFirstOverall
+          ? stripSpuriousListMarker(origin, result.text, isListSlot, false)
+          : result.text;
+        return {
+          text: finalText,
+          confirmedByFinishReason: Boolean(result.finishReason),
+        };
+      } catch (error) {
+        if (
+          isCancelled(signal, error) ||
+          !isTranslationTruncatedError(error) ||
+          depth >= MAX_TRUNCATION_SPLIT_DEPTH ||
+          chunkOrigin.length <= MIN_TRUNCATION_SPLIT_CHARS
+        ) {
+          throw error;
+        }
+
+        const targetMaxChars = Math.max(400, Math.floor(chunkOrigin.length / 2));
+        const subChunks = splitIntoTranslationChunks(chunkOrigin, targetMaxChars).filter(
+          (sub) => sub.trim().length > 0,
+        );
+        if (subChunks.length <= 1 || !subChunks.every((sub) => sub.length < chunkOrigin.length)) {
+          throw error;
+        }
+
+        let subCombined = '';
+        let allConfirmed = true;
+        for (let subIdx = 0; subIdx < subChunks.length; subIdx++) {
+          const sub = subChunks[subIdx];
+          const subPrefix = subCombined;
+          const subResult = await translateChunkWithSplit(
+            sub,
+            signal,
+            isFirstOverall && subIdx === 0,
+            depth + 1,
+            onPartial
+              ? (subPartial) => {
+                  const next = subPrefix
+                    ? appendTranslatedChunk(subPrefix, subPartial)
+                    : subPartial;
+                  onPartial(next);
+                }
+              : undefined,
+          );
+          if (!subResult.confirmedByFinishReason) {
+            allConfirmed = false;
+          }
+          if (subResult.text) {
+            subCombined = appendTranslatedChunk(subCombined, subResult.text);
+            if (subIdx < subChunks.length - 1) onPartial?.(subCombined);
+          }
+        }
+        return {
+          text: subCombined,
+          confirmedByFinishReason: allConfirmed,
+        };
       }
     };
 
+    const chunkPromises = chunks.map((chunk, index) =>
+      enqueueTranslation(
+        async (signal) => {
+          try {
+            const chunkResult = await translateChunkWithSplit(
+              chunk,
+              signal,
+              index === 0,
+              0,
+              (partialText) => {
+                partials[index] = partialText;
+                emitProgress();
+              },
+            );
+            partials[index] = '';
+            completed[index] = chunkResult.text;
+            chunkConfirmedByFinishReason[index] = chunkResult.confirmedByFinishReason;
+            emitProgress();
+          } catch (error) {
+            if (firstError === null) firstError = error;
+            if (!groupController.signal.aborted) groupController.abort(error);
+            throw error;
+          }
+        },
+        1,
+        groupController.signal,
+      ),
+    );
+
+    try {
+      await Promise.all(chunkPromises);
+    } catch (error) {
+      throw firstError ?? error;
+    }
+
     let combined = '';
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      if (!chunk.trim()) continue;
-      const rawChunkResult = await attempt(chunk, 0);
-      const chunkResult =
-        i === 0 ? stripSpuriousListMarker(origin, rawChunkResult, isListSlot, false) : rawChunkResult;
-      if (chunkResult) {
-        combined = appendTranslatedChunk(combined, chunkResult);
+    for (const chunkText of completed) {
+      if (chunkText) {
+        combined = appendTranslatedChunk(combined, chunkText);
       }
     }
 
-    if (!combined || combined === origin) return '';
-    assertTranslationComplete(origin, combined);
+    if (!combined) return '';
+    if (!stream && combined === origin) return '';
+    if (!chunkConfirmedByFinishReason.every(Boolean)) {
+      assertTranslationComplete(origin, combined);
+    }
 
     if (useCache) void cache.localSet(cacheKey, combined);
     return combined;
-  });
+  };
 
+  const taskPromise = runChunks();
   if (!shouldDedupe) return taskPromise;
 
   const trackedPromise = taskPromise.finally(() => {
-    if (inFlightTranslations.get(inFlightKey) === trackedPromise) {
+    if (inFlightTranslations.get(inFlightKey) === entry) {
       inFlightTranslations.delete(inFlightKey);
     }
   });
-  inFlightTranslations.set(inFlightKey, trackedPromise);
+  entry.promise = trackedPromise;
+  inFlightTranslations.set(inFlightKey, entry);
   return trackedPromise;
+}
+
+/** Unified non-streaming translation entry point. */
+export async function translateText(
+  origin: string,
+  context: string = typeof document === 'undefined' ? '' : buildPageContext(),
+  options: TranslateOptions = {},
+): Promise<string> {
+  return runChunkedTranslation(origin, context, false, options.onChunk, options);
 }
 
 /** Cancel queued requests and abort active transports. */
 export function cancelAllTranslations(): void {
   if (isDev) console.log('[翻译API] 取消所有等待中的翻译任务');
   inFlightTranslations.clear();
-  inFlightStreamTranslations.clear();
   clearTranslationQueue();
 }
 
@@ -600,6 +832,8 @@ export interface TranslateOptions {
   cacheKey?: string;
   /** Whether this unit corresponds to a list/definition/table slot. */
   isListSlot?: boolean;
+  /** Optional progressive update callback used for multi-chunk and streaming translations. */
+  onChunk?: (accumulated: string) => void;
 }
 
 export interface BatchTranslationRequestItem {
@@ -714,127 +948,7 @@ export async function translateTextStream(
   onChunk: (accumulated: string) => void,
   options: TranslateOptions = {},
 ): Promise<string> {
-  const {
-    timeout = 60000,
-    useCache = config.useCache,
-    bypassCacheRead = false,
-    cacheKey = origin,
-    isListSlot = false,
-  } = options;
-
-  if (detectlang(origin.replace(/[\s\u3000]/g, '')) === config.to) return origin;
-
-  const shouldDedupe = useCache && !bypassCacheRead;
-  const inFlightKey = shouldDedupe ? buildInFlightKey(cacheKey) : '';
-  const attachStreamListener = (entry: InFlightStreamEntry): Promise<string> => {
-    entry.listeners.add(onChunk);
-    if (entry.latestAccumulated) {
-      try {
-        onChunk(entry.latestAccumulated);
-      } catch {
-        // Ignore replay errors from detached callers
-      }
-    }
-    return entry.promise;
-  };
-
-  if (shouldDedupe) {
-    const existingStream = inFlightStreamTranslations.get(inFlightKey);
-    if (existingStream) return attachStreamListener(existingStream);
-    const existing = inFlightTranslations.get(inFlightKey);
-    if (existing) return existing;
-  }
-
-  if (shouldDedupe) {
-    const cachedResult = await cache.localGet(cacheKey);
-    if (cachedResult) return cachedResult;
-
-    const existingStreamAfterCache = inFlightStreamTranslations.get(inFlightKey);
-    if (existingStreamAfterCache) return attachStreamListener(existingStreamAfterCache);
-    const existingAfterCache = inFlightTranslations.get(inFlightKey);
-    if (existingAfterCache) return existingAfterCache;
-  }
-
-  if (config.enablePageSummary && servicesType.isUseModel(config.service)) {
-    warmUpPageSummary();
-  }
-
-  const chunks = splitIntoTranslationChunks(origin);
-  const listeners = new Set<(accumulated: string) => void>([onChunk]);
-  const streamEntry: InFlightStreamEntry = {
-    promise: Promise.resolve(''),
-    listeners,
-    latestAccumulated: '',
-  };
-
-  const taskPromise = enqueueTranslation(async (signal) => {
-    throwIfAborted(signal);
-    const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
-    let combined = '';
-
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      if (!chunk.trim()) continue;
-      throwIfAborted(signal);
-      const prefix = combined;
-      const isFirstChunk = i === 0;
-      const rawChunkResult = await requestViaPort(
-        { context, origin: chunk, pageSummary },
-        signal,
-        timeout,
-        {
-          timeout: '流式翻译请求超时',
-          disconnect: '流式翻译连接意外断开',
-          failure: '流式翻译失败',
-          invalid: '流式翻译返回了无效的响应格式',
-        },
-        (chunkAccumulated) => {
-          const sanitizedChunk = isFirstChunk
-            ? stripSpuriousListMarker(origin, chunkAccumulated, isListSlot, true)
-            : chunkAccumulated;
-          if (!sanitizedChunk) return;
-          const nextAccumulated = prefix
-            ? appendTranslatedChunk(prefix, sanitizedChunk)
-            : sanitizedChunk;
-          streamEntry.latestAccumulated = nextAccumulated;
-          for (const listener of streamEntry.listeners) {
-            try {
-              listener(nextAccumulated);
-            } catch {
-              // Isolate listener errors from other subscribers sharing this stream
-            }
-          }
-        },
-      );
-      const chunkResult = isFirstChunk
-        ? stripSpuriousListMarker(origin, rawChunkResult, isListSlot, false)
-        : rawChunkResult;
-      if (chunkResult) {
-        assertTranslationComplete(chunk, chunkResult);
-        combined = appendTranslatedChunk(combined, chunkResult);
-      }
-    }
-
-    if (!combined) return '';
-    assertTranslationComplete(origin, combined);
-    if (useCache) void cache.localSet(cacheKey, combined);
-    return combined;
-  });
-
-  if (!shouldDedupe) return taskPromise;
-
-  const trackedPromise = taskPromise.finally(() => {
-    if (inFlightStreamTranslations.get(inFlightKey) === streamEntry) {
-      inFlightStreamTranslations.delete(inFlightKey);
-    }
-    if (inFlightTranslations.get(inFlightKey) === trackedPromise) {
-      inFlightTranslations.delete(inFlightKey);
-    }
-  });
-  streamEntry.promise = trackedPromise;
-  inFlightStreamTranslations.set(inFlightKey, streamEntry);
-  inFlightTranslations.set(inFlightKey, trackedPromise);
-  return trackedPromise;
+  return runChunkedTranslation(origin, context, true, onChunk, options);
 }
 
 /** Translate multiple uncached page segments in a single LLM request and cache each result individually. */
@@ -868,67 +982,79 @@ export async function translateBatch(
     const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
 
     let rawResult = '';
-    if (useStream) {
-      const lastEmitted = new Map<number, string>();
-      rawResult = await requestViaPort(
-        { context, origin: batchOrigin, pageSummary },
-        signal,
-        timeout,
-        {
-          timeout: '流式翻译请求超时',
-          disconnect: '流式翻译连接意外断开',
-          failure: '流式翻译失败',
-          invalid: '流式翻译返回了无效的响应格式',
-        },
-        (accumulated) => {
-          const partialMap = parseBatchOutput(accumulated, true);
-          for (const item of items) {
-            if (!item.onChunk) continue;
-            const rawSegText = partialMap.get(item.id);
-            if (!rawSegText) continue;
-            const segText = stripSpuriousListMarker(
-              item.origin,
-              rawSegText,
-              Boolean(item.isListSlot),
-              true,
-            );
-            if (segText && segText !== lastEmitted.get(item.id)) {
-              lastEmitted.set(item.id, segText);
-              try {
-                item.onChunk(segText);
-              } catch {
-                // Isolate per-element stream preview error
+    let finishReason: string | undefined;
+    try {
+      if (useStream) {
+        const lastEmitted = new Map<number, string>();
+        const response = await requestViaPort(
+          { context, origin: batchOrigin, pageSummary },
+          signal,
+          timeout,
+          {
+            timeout: '流式翻译请求超时',
+            disconnect: '流式翻译连接意外断开',
+            failure: '流式翻译失败',
+            invalid: '流式翻译返回了无效的响应格式',
+          },
+          (accumulated) => {
+            const partialMap = parseBatchOutput(accumulated, true);
+            for (const item of items) {
+              if (!item.onChunk) continue;
+              const rawSegText = partialMap.get(item.id);
+              if (!rawSegText) continue;
+              const segText = stripSpuriousListMarker(
+                item.origin,
+                rawSegText,
+                Boolean(item.isListSlot),
+                true,
+              );
+              if (segText && segText !== lastEmitted.get(item.id)) {
+                lastEmitted.set(item.id, segText);
+                try {
+                  item.onChunk(segText);
+                } catch {
+                  // Isolate per-element stream preview error
+                }
               }
             }
+          },
+        );
+        rawResult = response.text;
+        finishReason = response.finishReason;
+      } else {
+        const attempt = async (retryCount: number): Promise<PortTranslationResult> => {
+          throwIfAborted(signal);
+          try {
+            return await requestViaPort(
+              { context, origin: batchOrigin, pageSummary },
+              signal,
+              timeout,
+              {
+                timeout: '翻译请求超时',
+                disconnect: '翻译连接意外断开',
+                failure: '翻译失败',
+                invalid: '翻译返回了无效的响应格式',
+              },
+            );
+          } catch (error) {
+            if (isCancelled(signal, error) || isTranslationTruncatedError(error)) throw error;
+            if (retryCount >= retryLimit) throw error;
+            if (isDev) {
+              console.log(`[翻译API] 批量翻译失败，${retryCount + 1}/${retryLimit} 次重试，原因:`, error);
+            }
+            await wait(retryInterval, signal);
+            return attempt(retryCount + 1);
           }
-        },
-      );
-    } else {
-      const attempt = async (retryCount: number): Promise<string> => {
-        throwIfAborted(signal);
-        try {
-          return await requestViaPort(
-            { context, origin: batchOrigin, pageSummary },
-            signal,
-            timeout,
-            {
-              timeout: '翻译请求超时',
-              disconnect: '翻译连接意外断开',
-              failure: '翻译失败',
-              invalid: '翻译返回了无效的响应格式',
-            },
-          );
-        } catch (error) {
-          if (isCancelled(signal, error)) throw error;
-          if (retryCount >= retryLimit) throw error;
-          if (isDev) {
-            console.log(`[翻译API] 批量翻译失败，${retryCount + 1}/${retryLimit} 次重试，原因:`, error);
-          }
-          await wait(retryInterval, signal);
-          return attempt(retryCount + 1);
-        }
-      };
-      rawResult = await attempt(0);
+        };
+        const response = await attempt(0);
+        rawResult = response.text;
+        finishReason = response.finishReason;
+      }
+    } catch (error) {
+      if (isTranslationTruncatedError(error) && items.length > 1) {
+        return new Map();
+      }
+      throw error;
     }
 
     if (!rawResult) return new Map();
@@ -963,7 +1089,7 @@ export async function translateBatch(
         }
         continue;
       }
-      if (isTranslationTruncated(item.origin, segText)) continue;
+      if (!finishReason && isTranslationTruncated(item.origin, segText)) continue;
 
       if (useCache) void cache.localSet(item.cacheKey, segText);
       validatedMap.set(item.id, segText);

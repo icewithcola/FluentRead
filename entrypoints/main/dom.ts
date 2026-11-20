@@ -408,13 +408,25 @@ function extractInlineMathText(element: Element): string {
   return element.textContent?.replace(/\s+/g, ' ').trim() || '';
 }
 
-function formatInlineCodeText(text: string): string {
+export function normalizeInlineCodeKey(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function extractWrappableInlineCode(text: string): string | null {
   const cleaned = text.replace(/\s+/g, ' ').trim();
-  if (!cleaned) return '';
+  if (!cleaned) return null;
   if (/[A-Za-z_$/\\-]/.test(cleaned) && !cleaned.includes('`') && cleaned.length <= 80) {
-    return `\`${cleaned}\``;
+    return cleaned;
   }
-  return cleaned;
+  return null;
+}
+
+function formatInlineCodeText(text: string): string {
+  const wrappable = extractWrappableInlineCode(text);
+  if (wrappable) {
+    return `\`${wrappable}\``;
+  }
+  return text.replace(/\s+/g, ' ').trim();
 }
 
 function isElementAtOrAfterBoundary(parent: Element, child: Element, boundary: Element): boolean {
@@ -591,6 +603,95 @@ export function getTranslatableText(
     visit(element, true);
   }
   return parts.join(' ');
+}
+
+/**
+ * Collect normalized values of inline code elements (`code`/`kbd`/`samp`/`var`)
+ * that `getTranslatableText` wrapped in synthetic backticks. Any value that also
+ * appears inside literal backticks in the element's plain text is excluded so
+ * real backticks in page prose or Markdown fences are never turned into `<code>`.
+ */
+export function getTranslatableInlineCodeValues(element: Element): Set<string> {
+  const syntheticCodes = new Set<string>();
+  if (
+    hasSkippedAncestor(element) ||
+    isOwnedElement(element) ||
+    isSkippedElement(element) ||
+    !isVisible(element)
+  ) {
+    return syntheticCodes;
+  }
+
+  const plainParts: string[] = [];
+  const visit = (node: Node): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (node.nodeValue) plainParts.push(node.nodeValue);
+      return;
+    }
+    if (!(node instanceof Element)) return;
+    if (isOwnedElement(node)) return;
+
+    if (isInlineMathElement(node)) {
+      plainParts.push(' ');
+      return;
+    }
+
+    const tag = node.tagName.toLowerCase();
+    if (INLINE_CODE_LIKE_TAGS.has(tag)) {
+      if (!isVisible(node)) return;
+      plainParts.push(' ');
+      const wrappable = extractWrappableInlineCode(node.textContent || '');
+      if (wrappable) {
+        syntheticCodes.add(normalizeInlineCodeKey(wrappable));
+      }
+      return;
+    }
+
+    if (isSkippedElement(node) || !isVisible(node)) {
+      return;
+    }
+
+    node.childNodes.forEach(visit);
+  };
+
+  const boundary = findFirstNestedBlockChild(element);
+  if (boundary) {
+    getLeadChildNodes(element, boundary).forEach(visit);
+  } else {
+    visit(element);
+  }
+
+  if (syntheticCodes.size === 0) return syntheticCodes;
+
+  const plainText = plainParts.join('');
+  if (!plainText.includes('`')) return syntheticCodes;
+
+  let i = 0;
+  while (i < plainText.length) {
+    if (plainText[i] !== '`') {
+      i++;
+      continue;
+    }
+    if (plainText[i + 1] === '`') {
+      while (i < plainText.length && plainText[i] === '`') i++;
+      continue;
+    }
+    const closeTick = plainText.indexOf('`', i + 1);
+    if (closeTick > i + 1 && plainText[closeTick + 1] !== '`') {
+      const val = plainText.slice(i + 1, closeTick);
+      if (!val.includes('\n') && val.length <= 100) {
+        const key = normalizeInlineCodeKey(val);
+        if (syntheticCodes.has(key)) {
+          syntheticCodes.delete(key);
+          i = closeTick + 1;
+          continue;
+        }
+      }
+    }
+    i++;
+  }
+
+  return syntheticCodes;
 }
 
 export function isOwnedElement(element: Element): boolean {

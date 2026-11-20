@@ -27,6 +27,7 @@ interface QueueEntry<T> {
   controller: AbortController;
   settled: boolean;
   weight: number;
+  cleanup?: () => void;
 }
 
 const PREFIX_WARMUP_MAX_WAIT_MS = 1500;
@@ -85,6 +86,7 @@ export function resetPrefixCacheWarm(): void {
 function settle<T>(entry: QueueEntry<T>, error?: unknown, value?: T): void {
   if (entry.settled) return;
   entry.settled = true;
+  entry.cleanup?.();
   if (error !== undefined) entry.reject(error);
   else entry.resolve(value as T);
 }
@@ -130,7 +132,19 @@ function processQueue(): void {
 }
 
 /** Add a task to the bounded queue. */
-export function enqueueTranslation<T>(translationTask: TranslationTask<T>, weight = 1): Promise<T> {
+export function enqueueTranslation<T>(
+  translationTask: TranslationTask<T>,
+  weight = 1,
+  externalSignal?: AbortSignal,
+): Promise<T> {
+  if (externalSignal?.aborted) {
+    return Promise.reject(
+      externalSignal.reason instanceof Error
+        ? externalSignal.reason
+        : new TranslationCancelledError(),
+    );
+  }
+
   return new Promise<T>((resolve, reject) => {
     const normalizedWeight = Number.isFinite(weight) ? Math.max(1, Math.floor(weight)) : 1;
     const entry: QueueEntry<T> = {
@@ -141,6 +155,23 @@ export function enqueueTranslation<T>(translationTask: TranslationTask<T>, weigh
       settled: false,
       weight: normalizedWeight,
     };
+
+    if (externalSignal) {
+      const onExternalAbort = () => {
+        const reason =
+          externalSignal.reason instanceof Error
+            ? externalSignal.reason
+            : new TranslationCancelledError();
+        const pendingIndex = pendingTranslations.indexOf(entry as QueueEntry<unknown>);
+        if (pendingIndex >= 0) {
+          pendingTranslations.splice(pendingIndex, 1);
+        }
+        entry.controller.abort(reason);
+        settle(entry, reason);
+      };
+      externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+      entry.cleanup = () => externalSignal.removeEventListener('abort', onExternalAbort);
+    }
 
     if (activeTranslations.size < getEffectiveMaxConcurrent()) runEntry(entry);
     else pendingTranslations.push(entry as QueueEntry<unknown>);

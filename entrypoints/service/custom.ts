@@ -6,6 +6,8 @@ import { contentPostHandler, sanitizeStreamPreview } from '@/entrypoints/utils/c
 import { cloudflareFailureMessage } from '@/entrypoints/utils/cloudflareError';
 import { assertSecureFirefoxEndpoint, firefoxRedirectMode } from '@/entrypoints/utils/network';
 import {
+  TranslationTruncatedError,
+  extractOpenAiFinishReason,
   isOpenAiResponseTruncated,
   openAiEndpointCandidates,
   openAiRequestBody,
@@ -63,7 +65,15 @@ async function custom(message: any, signal?: AbortSignal) {
     throw failedResponseError(resp, body);
   }
 
-  return readCustomResponse(resp, request.stream ? message._port : undefined, signal);
+  const { text, finishReason } = await readCustomResponse(
+    resp,
+    request.stream ? message._port : undefined,
+    signal,
+  );
+  if (message && finishReason) {
+    message._finishReason = finishReason;
+  }
+  return text;
 }
 
 export async function testCustomEndpoint({ url, token, model, stream }: OpenAiEndpointSettings) {
@@ -93,7 +103,8 @@ export async function testCustomEndpoint({ url, token, model, stream }: OpenAiEn
         requestError ??= failure;
         continue;
       }
-      if (await readCustomResponse(resp, undefined, signal)) return candidate;
+      const { text } = await readCustomResponse(resp, undefined, signal);
+      if (text) return candidate;
       requestError ??= '接口未返回翻译内容，请检查模型是否可用';
     } catch (error) {
       if (signal.aborted) throw new Error('连接超时，请检查网络或 API 地址');
@@ -106,7 +117,11 @@ export async function testCustomEndpoint({ url, token, model, stream }: OpenAiEn
   throw new Error(httpError ?? requestError ?? '接口未返回翻译内容，请检查模型是否可用');
 }
 
-async function readCustomResponse(resp: Response, port?: any, signal?: AbortSignal): Promise<string> {
+async function readCustomResponse(
+  resp: Response,
+  port?: any,
+  signal?: AbortSignal,
+): Promise<{ text: string; finishReason?: string }> {
   const contentType = resp.headers.get('content-type') || '';
   if (port && !contentType.includes('application/json')) {
     return parseStreamResponse(resp, port, signal);
@@ -121,11 +136,14 @@ async function readCustomResponse(resp: Response, port?: any, signal?: AbortSign
 
   const parsed = JSON.parse(responseText);
   if (isOpenAiResponseTruncated(parsed)) {
-    throw new Error('翻译结果超出模型输出长度上限而被截断');
+    throw new TranslationTruncatedError();
   }
   const result = openAiResponseText(parsed);
   if (!result) throw new Error('接口未返回翻译内容，请检查模型是否可用');
-  return contentPostHandler(result);
+  return {
+    text: contentPostHandler(result),
+    finishReason: extractOpenAiFinishReason(parsed),
+  };
 }
 
 function extractResponseErrorMessage(body: string): string {
@@ -160,46 +178,54 @@ function throwIfCloudflareErrorPage(body: string, resp: Response): void {
  * Parse an SSE text body (already fully read) and extract the translated content.
  * Used when the API returns SSE stream data but we don't have a Port for real-time updates.
  */
-function parseSSEText(text: string): string {
+function parseSSEText(text: string): { text: string; finishReason?: string } {
   let result = '';
+  let finishReason: string | undefined;
   for (const line of text.split('\n')) {
-    result += openAiStreamDelta(line);
+    const parsed = parseOpenAiStreamLine(line);
+    if (parsed.finishReason) finishReason = parsed.finishReason;
+    if (parsed.delta) result += parsed.delta;
   }
 
   if (!result) {
     throw new Error('未收到翻译内容，可尝试在设置中关闭“边译边显”后重试');
   }
-  return contentPostHandler(result);
+  return { text: contentPostHandler(result), finishReason };
 }
 
-function openAiStreamDelta(line: string): string {
+function parseOpenAiStreamLine(line: string): {
+  delta: string;
+  finishReason?: string;
+  done?: boolean;
+} {
   const trimmed = line.trim();
-  if (!trimmed.startsWith('data:')) return '';
+  if (!trimmed.startsWith('data:')) return { delta: '' };
   const data = trimmed.slice(5).trim();
-  if (!data || data === '[DONE]') return '';
+  if (!data) return { delta: '' };
+  if (data === '[DONE]') return { delta: '', done: true };
 
-  let event;
+  let event: any;
   try {
     event = JSON.parse(data);
   } catch (error) {
     console.warn('SSE chunk parse error:', error);
-    return '';
+    return { delta: '' };
   }
 
   if (event?.type === 'error' || event?.type === 'response.failed') {
     throw new Error(event.message || event.response?.error?.message || '接口返回错误，请稍后重试');
   }
-  if (
-    event?.choices?.[0]?.finish_reason === 'length' ||
-    event?.type === 'response.incomplete' ||
-    event?.response?.status === 'incomplete'
-  ) {
-    throw new Error('翻译结果超出模型输出长度上限而被截断');
+  if (isOpenAiResponseTruncated(event)) {
+    throw new TranslationTruncatedError();
   }
+  const finishReason = extractOpenAiFinishReason(event);
   const delta = event?.type === 'response.output_text.delta'
     ? event.delta
     : event?.choices?.[0]?.delta?.content;
-  return typeof delta === 'string' ? delta : '';
+  return {
+    delta: typeof delta === 'string' ? delta : '',
+    finishReason,
+  };
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -212,9 +238,13 @@ function throwIfAborted(signal?: AbortSignal): void {
 /**
  * Parse an SSE (Server-Sent Events) streaming response from an OpenAI-compatible API.
  * Sends each content delta to the content script via Port for real-time DOM updates.
- * Returns the full accumulated translated text.
+ * Returns the full accumulated translated text and finish reason.
  */
-async function parseStreamResponse(resp: Response, port: any, signal?: AbortSignal): Promise<string> {
+async function parseStreamResponse(
+  resp: Response,
+  port: any,
+  signal?: AbortSignal,
+): Promise<{ text: string; finishReason?: string }> {
   const contentType = resp.headers.get('content-type') || '';
   if (
     contentType.includes('text/html') ||
@@ -240,6 +270,7 @@ async function parseStreamResponse(resp: Response, port: any, signal?: AbortSign
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
   let result = '';
+  let finishReason: string | undefined;
   // Keep enough of the raw body to recognize a Cloudflare error page if the
   // stream never yields SSE deltas (wrong content-type, or CF HTML mid-flight).
   let rawPrefix = '';
@@ -265,16 +296,17 @@ async function parseStreamResponse(resp: Response, port: any, signal?: AbortSign
       if (!done) buffer = lines.pop() || '';
 
       for (const line of lines) {
-        const delta = openAiStreamDelta(line);
-        if (!delta) continue;
-        result += delta;
+        const parsed = parseOpenAiStreamLine(line);
+        if (parsed.finishReason) finishReason = parsed.finishReason;
+        if (!parsed.delta) continue;
+        result += parsed.delta;
         const preview = sanitizeStreamPreview(result);
         if (!preview) continue;
         try {
-          port.postMessage({ type: 'stream-chunk', chunk: delta, accumulated: preview });
+          port.postMessage({ type: 'stream-chunk', chunk: parsed.delta, accumulated: preview });
         } catch {
           throwIfAborted(signal);
-          return contentPostHandler(result);
+          return { text: contentPostHandler(result), finishReason };
         }
       }
       if (done) break;
@@ -287,7 +319,7 @@ async function parseStreamResponse(resp: Response, port: any, signal?: AbortSign
       throw new Error('未收到翻译内容，可尝试在设置中关闭“边译边显”后重试');
     }
 
-    return contentPostHandler(result);
+    return { text: contentPostHandler(result), finishReason };
   } finally {
     signal?.removeEventListener('abort', onAbort);
     await reader.cancel().catch(() => undefined);

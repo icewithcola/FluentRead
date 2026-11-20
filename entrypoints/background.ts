@@ -186,13 +186,18 @@ export default defineBackground({
           message._port = port;
           const result = await _service[config.service](message, controller.signal);
           if (controller.signal.aborted) return;
-          port.postMessage({ type: 'stream-done', result });
+          port.postMessage({
+            type: 'stream-done',
+            result,
+            finishReason: message._finishReason,
+          });
         } catch (error) {
           if (controller.signal.aborted || isAbortError(error)) return;
           try {
             port.postMessage({
               type: 'stream-error',
               error: error instanceof Error ? error.message : String(error),
+              code: (error as { code?: unknown })?.code,
             });
           } catch {
             // Port already disconnected.
