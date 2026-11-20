@@ -49,11 +49,8 @@ export const skipSet = new Set([
   'pre',
   'kbd',
   'samp',
-  'figcaption',
   'nav',
   'aside',
-  'header',
-  'footer',
   'audio',
   'video',
   'canvas',
@@ -101,6 +98,9 @@ const containerSet = new Set([
   'section',
   'main',
   'div',
+  'header',
+  'footer',
+  'figcaption',
   'label',
   'td',
   'th',
@@ -311,9 +311,17 @@ function hasMeaningfulText(text: string | null | undefined): boolean {
 }
 
 function isSkippedElement(element: Element): boolean {
-  if (skipSet.has(element.tagName.toLowerCase())) return true;
+  const tag = element.tagName.toLowerCase();
+  if (skipSet.has(tag)) return true;
   const roles = element.getAttribute('role')?.toLowerCase().split(/\s+/u) ?? [];
-  return roles.some((role) => skipRoleSet.has(role));
+  if (roles.some((role) => skipRoleSet.has(role))) return true;
+  if (tag === 'header') {
+    return !element.parentElement?.closest('article, main, section');
+  }
+  if (tag === 'footer') {
+    return !element.parentElement?.closest('article, blockquote, section');
+  }
+  return false;
 }
 
 function hasSkippedAncestor(element: Element): boolean {
@@ -465,9 +473,36 @@ function hasInlineContent(element: Element): boolean {
   });
 }
 
+const shortContentTagSet = new Set([
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'td',
+  'th',
+  'caption',
+  'figcaption',
+  'dt',
+  'dd',
+  'summary',
+]);
+
+export function minWordsForElement(element?: Element | null): number {
+  if (!element) return 3;
+  const tag = element.tagName.toLowerCase();
+  if (shortContentTagSet.has(tag)) return 2;
+  if (element.closest('td, th, figcaption, caption')) return 2;
+  return 3;
+}
+
 function hasTranslatableText(element: Element): boolean {
   // Inline code enriches a prose translation, but code alone is not prose.
-  return !isOwnedElement(element) && shouldTranslateContent(getTranslatableText(element, false));
+  return (
+    !isOwnedElement(element) &&
+    shouldTranslateContent(getTranslatableText(element, false), minWordsForElement(element))
+  );
 }
 
 function isMainlyNumericContent(element: Element): boolean {
@@ -805,7 +840,7 @@ export function isPureCodeContent(text: string): boolean {
  * a translation cannot add useful information. Length is not a reason to
  * skip: a Wikipedia paragraph of any size remains eligible.
  */
-export function shouldTranslateContent(text: string): boolean {
+export function shouldTranslateContent(text: string, minWords = 3): boolean {
   if (!text || typeof text !== 'string') return false;
   const value = text.replace(/\s+/gu, ' ').trim();
   if (!value || isPureCodeContent(value) || isNumericContent(value)) return false;
@@ -821,7 +856,7 @@ export function shouldTranslateContent(text: string): boolean {
   // Require three meaningful words in the unit as a whole. A per-sentence
   // minimum previously rejected Wikipedia paragraphs because citation markers
   // such as "[8][9]" were treated as sentences and vetoed the entire block.
-  return countMeaningfulWords(value) >= 3;
+  return countMeaningfulWords(value) >= minWords;
 }
 
 function isUserIdentifier(text: string): boolean {
@@ -970,9 +1005,57 @@ export function checkAndRemoveStyle(node: any, styleProperty: any) {
   if (node?.style && node.style[styleProperty] !== undefined) node.style[styleProperty] = '';
 }
 
+/** Inline styles flattened for bilingual output, remembered for restore. */
+const TRUNCATION_SNAPSHOT_ATTR = 'data-fr-truncation-snapshot';
+
+interface TruncationSnapshot {
+  lineClamp: string;
+  maxHeight: string;
+  hadStyleAttribute: boolean;
+}
+
 export function smashTruncationStyle(node: any) {
   if (!node?.style) return;
+  // Bilingual output is taller than the translated line, so the site's clamp
+  // has to go. Remember the site's own inline values first: restore has to put
+  // them back, otherwise a `-webkit-line-clamp` set by the page silently stays
+  // cancelled after the user turns translation off.
+  if (node instanceof HTMLElement && !node.hasAttribute(TRUNCATION_SNAPSHOT_ATTR)) {
+    const snapshot: TruncationSnapshot = {
+      lineClamp: node.style.getPropertyValue('-webkit-line-clamp'),
+      maxHeight: node.style.getPropertyValue('max-height'),
+      hadStyleAttribute: node.hasAttribute('style'),
+    };
+    node.setAttribute(TRUNCATION_SNAPSHOT_ATTR, JSON.stringify(snapshot));
+  }
   checkAndRemoveStyle(node, 'webkitLineClamp');
   node.style.webkitLineClamp = 'unset';
   node.style.maxHeight = 'unset';
+}
+
+/** Undo smashTruncationStyle and drop the snapshot marker. */
+export function restoreTruncationStyle(node: any) {
+  if (!(node instanceof HTMLElement)) return;
+  const raw = node.getAttribute(TRUNCATION_SNAPSHOT_ATTR);
+  if (raw === null) return;
+  node.removeAttribute(TRUNCATION_SNAPSHOT_ATTR);
+
+  let snapshot: TruncationSnapshot | null = null;
+  try {
+    snapshot = JSON.parse(raw) as TruncationSnapshot;
+  } catch {
+    return;
+  }
+  if (!snapshot) return;
+
+  if (snapshot.lineClamp) node.style.setProperty('-webkit-line-clamp', snapshot.lineClamp);
+  else node.style.removeProperty('-webkit-line-clamp');
+  if (snapshot.maxHeight) node.style.setProperty('max-height', snapshot.maxHeight);
+  else node.style.removeProperty('max-height');
+
+  // The page may not have had a style attribute at all; do not leave an empty
+  // one behind, since some sites key their own styling off its presence.
+  if (!snapshot.hadStyleAttribute && node.getAttribute('style') === '') {
+    node.removeAttribute('style');
+  }
 }

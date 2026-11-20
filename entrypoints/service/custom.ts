@@ -6,6 +6,7 @@ import { contentPostHandler } from '@/entrypoints/utils/check';
 import { cloudflareFailureMessage } from '@/entrypoints/utils/cloudflareError';
 import { assertSecureFirefoxEndpoint, firefoxRedirectMode } from '@/entrypoints/utils/network';
 import {
+  isOpenAiResponseTruncated,
   openAiEndpointCandidates,
   openAiRequestBody,
   openAiResponseText,
@@ -70,7 +71,7 @@ export async function testCustomEndpoint({ url, token, model, stream }: OpenAiEn
   const request: OpenAiRequest = {
     model,
     messages: [{ role: 'user', content: 'Reply with only the word OK.' }],
-    temperature: 0.7,
+    temperature: 0.3,
     stream: stream || undefined,
   };
   const signal = AbortSignal.timeout(20_000);
@@ -115,7 +116,11 @@ async function readCustomResponse(resp: Response, port?: any, signal?: AbortSign
     return parseSSEText(responseText);
   }
 
-  const result = openAiResponseText(JSON.parse(responseText));
+  const parsed = JSON.parse(responseText);
+  if (isOpenAiResponseTruncated(parsed)) {
+    throw new Error('翻译结果超出模型输出长度上限而被截断');
+  }
+  const result = openAiResponseText(parsed);
   if (!result) throw new Error('接口未返回翻译内容，请检查模型是否可用');
   return contentPostHandler(result);
 }
@@ -180,6 +185,13 @@ function openAiStreamDelta(line: string): string {
 
   if (event?.type === 'error' || event?.type === 'response.failed') {
     throw new Error(event.message || event.response?.error?.message || '接口返回错误，请稍后重试');
+  }
+  if (
+    event?.choices?.[0]?.finish_reason === 'length' ||
+    event?.type === 'response.incomplete' ||
+    event?.response?.status === 'incomplete'
+  ) {
+    throw new Error('翻译结果超出模型输出长度上限而被截断');
   }
   const delta = event?.type === 'response.output_text.delta'
     ? event.delta

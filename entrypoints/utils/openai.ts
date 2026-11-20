@@ -62,6 +62,13 @@ export function openAiRequestBody(endpoint: string, request: OpenAiRequest): str
   return JSON.stringify({ model, input: messages, stream, store: false });
 }
 
+export function isOpenAiResponseTruncated(result: any): boolean {
+  const finishReason = result?.choices?.[0]?.finish_reason;
+  if (finishReason === 'length') return true;
+  if (result?.status === 'incomplete') return true;
+  return false;
+}
+
 export function openAiResponseText(result: any): string {
   const chatText = result?.choices?.[0]?.message?.content;
   if (typeof chatText === 'string') return chatText;

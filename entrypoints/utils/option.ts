@@ -7,7 +7,7 @@ export const services = {
 };
 
 export function defaultServiceForBrowser(): string {
-  return import.meta.env.FIREFOX ? services.google : services.chromeTranslator;
+  return services.google;
 }
 
 export function supportedServiceForBrowser(service: string): string {
@@ -18,7 +18,7 @@ export function supportedServiceForBrowser(service: string): string {
 
 export const servicesType = {
   // 阵营划分
-  machine: new Set([services.chromeTranslator]),
+  machine: new Set([services.chromeTranslator, services.google]),
   // 需要 token
   useToken: new Set([services.custom]),
   // 需要 model

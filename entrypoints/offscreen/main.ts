@@ -197,7 +197,15 @@ async function handleTranslationRequest(data: any): Promise<string> {
 
     // 提供更友好的错误信息
     if (error instanceof Error) {
-      if (error.message.includes('not available') || error.message.includes('not ready')) {
+      if (
+        error.message.includes('user gesture') ||
+        error.message.includes('downloadable') ||
+        error.message.includes('downloading')
+      ) {
+        throw new Error(
+          'Chrome 本地翻译语言包尚未下载（需首次在浏览器交互中触发下载），请在设置中切换为「Google 翻译」或「自定义 AI 接口」',
+        );
+      } else if (error.message.includes('not available') || error.message.includes('not ready')) {
         throw new Error('Chrome 正在准备本地翻译模型，请稍后重试');
       } else if (error.message.includes('language') || error.message.includes('not supported')) {
         throw new Error(

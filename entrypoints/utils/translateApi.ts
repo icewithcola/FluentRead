@@ -10,12 +10,283 @@ import { enqueueTranslation, clearTranslationQueue, getQueueStatus, TranslationC
 import browser from 'webextension-polyfill';
 import { config } from './config';
 import { cache } from './cache';
-import { detectlang } from './common';
+import { detectlang, getCjkLanguageTag } from './common';
 import { storage } from '@wxt-dev/storage';
 import { getCurrentPageSummary } from './pageSummary';
 import { TRANSLATION_COUNT_KEY, normalizeTranslationCount } from './constant';
 
 const isDev = process.env.NODE_ENV === 'development';
+
+const TRUNCATION_CHECK_MIN_SOURCE_CHARS = 2000;
+const TRUNCATION_MIN_LENGTH_RATIO = 0.25;
+const MAX_TRANSLATION_CHUNK_CHARS = 3500;
+
+const HTML_VOID_TAGS = new Set([
+  'area',
+  'base',
+  'br',
+  'col',
+  'embed',
+  'hr',
+  'img',
+  'input',
+  'link',
+  'meta',
+  'param',
+  'source',
+  'track',
+  'wbr',
+]);
+
+interface SentenceSegment {
+  segment: string;
+}
+
+interface SentenceSegmenter {
+  segment(text: string): Iterable<SentenceSegment>;
+}
+
+type SentenceSegmenterConstructor = new (
+  locales?: string | string[],
+  options?: { granularity: 'sentence' },
+) => SentenceSegmenter;
+
+function createSentenceSegmenter(): SentenceSegmenter | null {
+  if (typeof Intl === 'undefined') return null;
+  const segmenter = (Intl as typeof Intl & { Segmenter?: SentenceSegmenterConstructor }).Segmenter;
+  if (!segmenter) return null;
+  try {
+    return new segmenter(undefined, { granularity: 'sentence' });
+  } catch {
+    return null;
+  }
+}
+
+function plainTextLength(value: string): number {
+  return value
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim().length;
+}
+
+function assertTranslationComplete(origin: string, translated: string): void {
+  const sourceLen = plainTextLength(origin);
+  if (sourceLen <= TRUNCATION_CHECK_MIN_SOURCE_CHARS) return;
+  const translatedLen = plainTextLength(translated);
+  if (translatedLen / sourceLen < TRUNCATION_MIN_LENGTH_RATIO) {
+    throw new Error('翻译结果不完整（疑似被模型截断），请重试');
+  }
+}
+
+function splitOversizedSegment(segment: string, maxChars: number): string[] {
+  if (segment.length <= maxChars) return [segment];
+  const parts: string[] = [];
+  let remaining = segment;
+  const minSplit = Math.floor(maxChars * 0.4);
+
+  while (remaining.length > maxChars) {
+    const slice = remaining.slice(0, maxChars);
+    let splitIdx = -1;
+
+    for (let i = slice.length - 1; i >= minSplit; i--) {
+      if (/\s/.test(slice[i])) {
+        splitIdx = i;
+        break;
+      }
+    }
+    if (splitIdx < 0) {
+      for (let i = slice.length - 1; i >= minSplit; i--) {
+        if (/[,;，；、]/.test(slice[i])) {
+          splitIdx = i;
+          break;
+        }
+      }
+    }
+    if (splitIdx < 0) {
+      for (let i = minSplit - 1; i >= 1; i--) {
+        if (/[\s,;，；、]/.test(slice[i])) {
+          splitIdx = i;
+          break;
+        }
+      }
+    }
+
+    const cut = splitIdx >= 0 ? splitIdx + 1 : maxChars;
+    parts.push(remaining.slice(0, cut));
+    remaining = remaining.slice(cut);
+  }
+  if (remaining) parts.push(remaining);
+  return parts;
+}
+
+function splitPlainTextSegments(text: string, maxChars: number): string[] {
+  const segmenter = createSentenceSegmenter();
+  const rawSegments: string[] = [];
+
+  if (segmenter) {
+    for (const part of segmenter.segment(text)) {
+      if (part.segment) rawSegments.push(part.segment);
+    }
+  } else {
+    const matches = text.match(/[^.!?;。！？；\n]+[.!?;。！？；\n]*|[\n]+/g);
+    if (matches) {
+      let matchedLength = 0;
+      for (const item of matches) {
+        rawSegments.push(item);
+        matchedLength += item.length;
+      }
+      if (matchedLength < text.length) rawSegments.push(text.slice(matchedLength));
+    } else {
+      rawSegments.push(text);
+    }
+  }
+
+  return rawSegments.flatMap((segment) => splitOversizedSegment(segment, maxChars));
+}
+
+function findClosingTagAngle(html: string, start: number): number {
+  let quote: string | null = null;
+  for (let i = start + 1; i < html.length; i++) {
+    const ch = html[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === '<') {
+      return -1;
+    } else if (ch === '>') {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function splitHtmlAwareSegments(html: string): string[] {
+  const segments: string[] = [];
+  let depth = 0;
+  let segStart = 0;
+
+  for (let i = 0; i < html.length; i++) {
+    if (html[i] === '<') {
+      if (html.startsWith('<!--', i)) {
+        const commentEnd = html.indexOf('-->', i + 4);
+        if (commentEnd >= 0) {
+          i = commentEnd + 2;
+          continue;
+        }
+      }
+      if (html[i + 1] && /[a-zA-Z/]/.test(html[i + 1])) {
+        const gt = findClosingTagAngle(html, i);
+        if (gt > i) {
+          const tagStr = html.slice(i, gt + 1);
+          const tagMatch = tagStr.match(/^<\/?\s*([a-zA-Z][a-zA-Z0-9-]*)/);
+          if (tagMatch) {
+            const tagName = tagMatch[1].toLowerCase();
+            if (tagStr.startsWith('</')) {
+              depth = Math.max(0, depth - 1);
+            } else if (!tagStr.endsWith('/>') && !HTML_VOID_TAGS.has(tagName)) {
+              depth++;
+            }
+            i = gt;
+            continue;
+          }
+        }
+      }
+    }
+
+    if (depth !== 0) continue;
+
+    const ch = html[i];
+    if (ch === '\n') {
+      segments.push(html.slice(segStart, i + 1));
+      segStart = i + 1;
+      continue;
+    }
+
+    if (ch === '。' || ch === '！' || ch === '？') {
+      let end = i + 1;
+      while (end < html.length && /[”」’"')） \t]/.test(html[end])) end++;
+      segments.push(html.slice(segStart, end));
+      segStart = end;
+      i = end - 1;
+      continue;
+    }
+
+    if (ch === '.' || ch === '!' || ch === '?') {
+      let end = i + 1;
+      while (end < html.length && /[”’"')）]/.test(html[end])) end++;
+      if (end === html.length || /\s/.test(html[end])) {
+        while (end < html.length && /[ \t]/.test(html[end])) end++;
+        segments.push(html.slice(segStart, end));
+        segStart = end;
+        i = end - 1;
+      }
+    }
+  }
+
+  if (segStart < html.length) {
+    segments.push(html.slice(segStart));
+  }
+  return segments;
+}
+
+function packSegmentsIntoChunks(segments: string[], maxChars: number): string[] {
+  const chunks: string[] = [];
+  let current = '';
+
+  for (const segment of segments) {
+    if (!segment) continue;
+    if (!current) {
+      current = segment;
+      continue;
+    }
+    if (current.length + segment.length <= maxChars) {
+      current += segment;
+    } else {
+      if (current.trim()) chunks.push(current);
+      else if (chunks.length > 0) chunks[chunks.length - 1] += current;
+      current = segment;
+    }
+  }
+
+  if (current) {
+    if (current.trim() || chunks.length === 0) chunks.push(current);
+    else chunks[chunks.length - 1] += current;
+  }
+
+  return chunks;
+}
+
+export function splitIntoTranslationChunks(
+  origin: string,
+  maxChars = MAX_TRANSLATION_CHUNK_CHARS,
+): string[] {
+  if (!origin || origin.length <= maxChars) return [origin];
+
+  const hasHtmlMarkup =
+    /<\/[a-zA-Z][a-zA-Z0-9-]*>/.test(origin) || /<(?:br|hr|img|wbr)\b[^>]*>/i.test(origin);
+  const segments = hasHtmlMarkup
+    ? splitHtmlAwareSegments(origin)
+    : splitPlainTextSegments(origin, maxChars);
+  const chunks = packSegmentsIntoChunks(segments, maxChars);
+  return chunks.length > 0 ? chunks : [origin];
+}
+
+function appendTranslatedChunk(accumulated: string, nextChunk: string): string {
+  if (!accumulated) return nextChunk;
+  if (!nextChunk) return accumulated;
+  if (/\s$/.test(accumulated) || /^\s/.test(nextChunk)) {
+    return `${accumulated}${nextChunk}`;
+  }
+  if (getCjkLanguageTag(config.to)) {
+    const needsAsciiSpace =
+      /[A-Za-z0-9.!?]$/.test(accumulated) && /^[A-Za-z0-9]/.test(nextChunk);
+    return needsAsciiSpace ? `${accumulated} ${nextChunk}` : `${accumulated}${nextChunk}`;
+  }
+  return `${accumulated} ${nextChunk}`;
+}
 
 function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) {
@@ -201,22 +472,28 @@ export async function translateText(
     if (cachedResult) return cachedResult;
   }
 
+  const chunks = splitIntoTranslationChunks(origin);
+
   return enqueueTranslation(async (signal) => {
     throwIfAborted(signal);
 
-    const attempt = async (retryCount: number): Promise<string> => {
+    const attempt = async (chunkOrigin: string, retryCount: number): Promise<string> => {
       throwIfAborted(signal);
       try {
         const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
-        const result = await requestViaPort({ context, origin, pageSummary }, signal, timeout, {
-          timeout: '翻译请求超时',
-          disconnect: '翻译连接意外断开',
-          failure: '翻译失败',
-          invalid: '翻译返回了无效的响应格式',
-        });
-        if (!result || result === origin) return '';
-
-        if (useCache) void cache.localSet(cacheKey, result);
+        const result = await requestViaPort(
+          { context, origin: chunkOrigin, pageSummary },
+          signal,
+          timeout,
+          {
+            timeout: '翻译请求超时',
+            disconnect: '翻译连接意外断开',
+            failure: '翻译失败',
+            invalid: '翻译返回了无效的响应格式',
+          },
+        );
+        if (!result) return '';
+        assertTranslationComplete(chunkOrigin, result);
         return result;
       } catch (error) {
         if (isCancelled(signal, error)) throw error;
@@ -225,11 +502,24 @@ export async function translateText(
           console.log(`[翻译API] 翻译失败，${retryCount + 1}/${retryLimit} 次重试，原因:`, error);
         }
         await wait(retryInterval, signal);
-        return attempt(retryCount + 1);
+        return attempt(chunkOrigin, retryCount + 1);
       }
     };
 
-    return attempt(0);
+    let combined = '';
+    for (const chunk of chunks) {
+      if (!chunk.trim()) continue;
+      const chunkResult = await attempt(chunk, 0);
+      if (chunkResult) {
+        combined = appendTranslatedChunk(combined, chunkResult);
+      }
+    }
+
+    if (!combined || combined === origin) return '';
+    assertTranslationComplete(origin, combined);
+
+    if (useCache) void cache.localSet(cacheKey, combined);
+    return combined;
   });
 }
 
@@ -273,22 +563,40 @@ export async function translateTextStream(
     if (cachedResult) return cachedResult;
   }
 
+  const chunks = splitIntoTranslationChunks(origin);
+
   return enqueueTranslation(async (signal) => {
     throwIfAborted(signal);
     const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
-    const result = await requestViaPort(
-      { context, origin, pageSummary },
-      signal,
-      timeout,
-      {
-        timeout: '流式翻译请求超时',
-        disconnect: '流式翻译连接意外断开',
-        failure: '流式翻译失败',
-        invalid: '流式翻译返回了无效的响应格式',
-      },
-      onChunk,
-    );
-    if (result && useCache) void cache.localSet(cacheKey, result);
-    return result || '';
+    let combined = '';
+
+    for (const chunk of chunks) {
+      if (!chunk.trim()) continue;
+      throwIfAborted(signal);
+      const prefix = combined;
+      const chunkResult = await requestViaPort(
+        { context, origin: chunk, pageSummary },
+        signal,
+        timeout,
+        {
+          timeout: '流式翻译请求超时',
+          disconnect: '流式翻译连接意外断开',
+          failure: '流式翻译失败',
+          invalid: '流式翻译返回了无效的响应格式',
+        },
+        (chunkAccumulated) => {
+          onChunk(prefix ? appendTranslatedChunk(prefix, chunkAccumulated) : chunkAccumulated);
+        },
+      );
+      if (chunkResult) {
+        assertTranslationComplete(chunk, chunkResult);
+        combined = appendTranslatedChunk(combined, chunkResult);
+      }
+    }
+
+    if (!combined) return '';
+    assertTranslationComplete(origin, combined);
+    if (useCache) void cache.localSet(cacheKey, combined);
+    return combined;
   });
 }

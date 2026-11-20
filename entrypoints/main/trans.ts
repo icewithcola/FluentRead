@@ -9,6 +9,8 @@ import {
   grabAllNode,
   LLMStandardHTML,
   getTranslatableText,
+  minWordsForElement,
+  restoreTruncationStyle,
   sanitizeTranslationHTML,
   smashTruncationStyle,
   shouldTranslateContent,
@@ -208,7 +210,9 @@ function releaseRecord(record: TranslationRecord): void {
 function createRecord(element: Element, generation: number): TranslationRecord | null {
   if (!(element instanceof HTMLElement) || !element.isConnected) return null;
   if (element.hasAttribute(TRANSLATED_ID_ATTR) || element.hasAttribute(TRANSLATED_ATTR)) return null;
-  if (!shouldTranslateContent(getTranslatableText(element, false))) return null;
+  if (!shouldTranslateContent(getTranslatableText(element, false), minWordsForElement(element))) {
+    return null;
+  }
 
   const record: TranslationRecord = {
     id: `fr-node-${nodeIdCounter++}`,
@@ -234,7 +238,12 @@ function beginContext(element: HTMLElement, forceRetry = false): TranslationCont
   // Manual hover calls can bypass DOM discovery, so apply the same cheap gate
   // before allocating request state. Existing records keep their captured
   // source, which also makes retries stable if the page changed meanwhile.
-  if (!record && !shouldTranslateContent(getTranslatableText(element, false))) return null;
+  if (
+    !record &&
+    !shouldTranslateContent(getTranslatableText(element, false), minWordsForElement(element))
+  ) {
+    return null;
+  }
   if (record) {
     if (!recordIsCurrent(record)) return null;
     if (record.status === 'translating') return null;
@@ -376,6 +385,7 @@ function stabilizeTranslationPlacement(content: HTMLElement, host: HTMLElement):
 function clearBilingualOutput(element: HTMLElement): void {
   element.querySelectorAll(`.${BILINGUAL_CONTENT_CLASS}`).forEach((content) => content.remove());
   element.classList.remove(BILINGUAL_CLASS);
+  restoreTruncationStyle(element);
 }
 
 function applyCachedHTML(element: HTMLElement, cached: string, trustedSourceHTML: string): boolean {
@@ -574,6 +584,7 @@ export function restoreOriginalContent(): void {
       clearCapturedChildren(context);
     }
     element.classList.remove(BILINGUAL_CLASS, 'fluent-read-failure');
+    restoreTruncationStyle(element);
     if (element.getAttribute(TRANSLATED_ID_ATTR) === record.id) {
       element.removeAttribute(TRANSLATED_ID_ATTR);
       element.removeAttribute(TRANSLATED_ATTR);
@@ -596,6 +607,8 @@ export function restoreOriginalContent(): void {
     )
     .forEach((node) => node.remove());
   document.querySelectorAll(`.${BILINGUAL_CLASS}`).forEach((node) => node.classList.remove(BILINGUAL_CLASS));
+  // Legacy/interrupted markup can leave the flattening snapshot behind.
+  document.querySelectorAll('[data-fr-truncation-snapshot]').forEach((node) => restoreTruncationStyle(node));
   document.querySelectorAll('style[data-fr-temp-style]').forEach((node) => node.remove());
   nodeIdCounter = 0;
 }
@@ -754,6 +767,7 @@ export function handleBilingualTranslation(
       spinner.remove();
       bilingualNode.querySelector(`.${BILINGUAL_CONTENT_CLASS}`)?.remove();
       bilingualNode.classList.remove(BILINGUAL_CLASS);
+      restoreTruncationStyle(bilingualNode);
     }, 250);
     return;
   }
