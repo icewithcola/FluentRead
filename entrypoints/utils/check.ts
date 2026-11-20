@@ -73,11 +73,31 @@ export function searchClassName(node: Node, className: string): Node | null {
 }
 
 export function contentPostHandler(text: string) {
-  // 替换掉<think>与</think>之间的内容
   let content = text;
-  content = content.replace(/^<think>[\s\S]*?<\/think>/, '');
+  // Strip complete leading <think>...</think> blocks (allowing leading whitespace)
+  content = content.replace(/^\s*<think\b[^>]*>[\s\S]*?<\/think>\s*/i, '');
+  // Strip unclosed leading <think> block if output was truncated mid-thought
+  content = content.replace(/^\s*<think\b[^>]*>[\s\S]*$/i, '');
+  // Strip outer markdown code fences when a model wraps output in ```...```
+  content = content.replace(
+    /^\s*```(?:html|xml|text|markdown)?\s*\r?\n([\s\S]*?)\r?\n```\s*$/i,
+    '$1',
+  );
   // Remove any remaining <to_translate> and </to_translate> tags from translation results
   content = content.replace(/<\/?to_translate>/g, '');
   // 去除模型可能原样输出的首尾空白，避免空白进入译文内容
   return content.trim();
+}
+
+/**
+ * Sanitize accumulated streaming output before rendering to the DOM so
+ * reasoning model <think> tokens are never flashed on screen mid-stream.
+ */
+export function sanitizeStreamPreview(text: string): string {
+  let content = text.replace(/^\s*<think\b[^>]*>[\s\S]*?<\/think>\s*/i, '');
+  if (/^\s*<think\b[^>]*>/i.test(content) || /^\s*<(?:t(?:h(?:i(?:n(?:k)?)?)?)?)?$/i.test(content)) {
+    return '';
+  }
+  content = content.replace(/<\/?to_translate>/g, '');
+  return content.trimStart();
 }

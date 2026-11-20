@@ -1,7 +1,11 @@
 import { Config } from '@/entrypoints/utils/model';
 import { TRANSLATION_COUNT_KEY, normalizeTranslationCount } from '@/entrypoints/utils/constant';
 import { storage } from '@wxt-dev/storage';
-import { migrateCustomModels, supportedServiceForBrowser } from '@/entrypoints/utils/option';
+import {
+  migrateCustomModels,
+  migrateDefaultPrompts,
+  supportedServiceForBrowser,
+} from '@/entrypoints/utils/option';
 
 // 声明 config 类型, new Config() 会设置好所有默认值
 export let config: Config = new Config();
@@ -31,7 +35,8 @@ async function loadConfig() {
         Object.assign(config, parsedConfig);
         config.service = supportedServiceForBrowser(config.service);
         const migratedModel = migrateCustomModels(config);
-        if (config.service !== parsedConfig.service || migratedModel) {
+        const migratedPrompts = migrateDefaultPrompts(config);
+        if (config.service !== parsedConfig.service || migratedModel || migratedPrompts) {
           await storage.setItem('local:config', JSON.stringify(config));
         }
         await syncTranslationCount();
@@ -63,6 +68,7 @@ storage.watch('local:config', (newValue: any, oldValue: any) => {
         Object.assign(config, parsedConfig);
         config.service = supportedServiceForBrowser(config.service);
         migrateCustomModels(config);
+        migrateDefaultPrompts(config);
         retainHighestCount(previousCount);
       } else {
         console.warn('An invalid configuration was detected in storage.watch. Ignoring.');

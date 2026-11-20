@@ -110,6 +110,9 @@ const MAX_RETRY_WAIT_SECONDS = 120; // Don't wait more than 2 minutes
 
 // --- Global state: current page summary for translation context injection ---
 let currentPageSummary: string = '';
+let inFlightSummaryPromise: Promise<string> | null = null;
+let cachedMetaUrl = '';
+let cachedMetaSummary = '';
 
 /**
  * Get the current page summary text.
@@ -117,6 +120,10 @@ let currentPageSummary: string = '';
  * Returns empty string if summary is not available yet or feature is disabled.
  */
 export function getCurrentPageSummary(): string {
+  if (!currentPageSummary && config.enablePageSummary && config.useCache) {
+    const cached = getCachedSummary();
+    if (cached) currentPageSummary = cached;
+  }
   return currentPageSummary;
 }
 
@@ -125,6 +132,159 @@ export function getCurrentPageSummary(): string {
  */
 export function clearCurrentPageSummary(): void {
   currentPageSummary = '';
+}
+
+function extractCleanNodeText(node: Element): string {
+  let text = '';
+  const walk = (current: Node): void => {
+    if (current.nodeType === Node.TEXT_NODE) {
+      if (current.nodeValue) text += current.nodeValue;
+      return;
+    }
+    if (!(current instanceof Element)) return;
+    const tag = current.tagName.toLowerCase();
+    if (
+      tag === 'script' ||
+      tag === 'style' ||
+      current.hasAttribute('data-fr-owned') ||
+      current.classList.contains('fluent-read-bilingual-content') ||
+      current.classList.contains('fluent-read-loading') ||
+      current.classList.contains('fluent-read-retry-wrapper')
+    ) {
+      return;
+    }
+    if (tag === 'br') {
+      text += ' ';
+      return;
+    }
+    current.childNodes.forEach(walk);
+    if (BLOCK_TAGS.has(current.tagName)) text += ' ';
+  };
+  walk(node);
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+function getPageMetadataSummary(): string {
+  if (typeof document === 'undefined') return '';
+  const currentUrl = typeof location !== 'undefined' ? location.href : '';
+  if (currentUrl && cachedMetaUrl === currentUrl) {
+    return cachedMetaSummary;
+  }
+
+  const selectors = [
+    'meta[name="citation_title"]',
+    'meta[name="dc.subject"]',
+    'meta[name="keywords"]',
+    'meta[name="description"]',
+    'meta[property="og:description"]',
+  ];
+  const seen = new Set<string>();
+  const values: string[] = [];
+  let totalLen = 0;
+
+  for (const selector of selectors) {
+    const content =
+      document.querySelector(selector)?.getAttribute('content')?.replace(/\s+/g, ' ').trim() || '';
+    if (!content || seen.has(content)) continue;
+    seen.add(content);
+    values.push(content);
+    totalLen += content.length;
+    if (totalLen >= 220) break;
+  }
+
+  const summary = values.join(' | ').slice(0, 220).trim();
+  if (currentUrl) {
+    cachedMetaUrl = currentUrl;
+    cachedMetaSummary = summary;
+  }
+  return summary;
+}
+
+function findSectionBreadcrumb(element: Element): string {
+  if (typeof document === 'undefined') return '';
+  const selfText = extractCleanNodeText(element);
+  const collected: string[] = [];
+  let current: Element | null = element;
+  let depth = 0;
+
+  while (current && current !== document.body && depth < 8) {
+    let prev = current.previousElementSibling;
+    let steps = 0;
+    while (prev && steps < 12) {
+      if (!shouldSkipElement(prev)) {
+        const heading = /^H[1-4]$/i.test(prev.tagName)
+          ? prev
+          : !prev.querySelector('p, article, section, main')
+            ? prev.querySelector('h1, h2, h3, h4')
+            : null;
+        if (heading && !shouldSkipElement(heading)) {
+          const text = extractCleanNodeText(heading).slice(0, 80).trim();
+          if (text && text !== selfText) {
+            collected.push(text);
+            break;
+          }
+        }
+      }
+      prev = prev.previousElementSibling;
+      steps++;
+    }
+    current = current.parentElement;
+    depth++;
+  }
+
+  const ordered = collected.reverse();
+  const primaryH1 = document.querySelector('article h1, main h1, h1');
+  if (primaryH1 && !shouldSkipElement(primaryH1)) {
+    const h1Text = extractCleanNodeText(primaryH1).slice(0, 80).trim();
+    if (h1Text && h1Text !== selfText && !ordered.includes(h1Text)) {
+      ordered.unshift(h1Text);
+    }
+  }
+
+  const deduped: string[] = [];
+  for (const item of ordered) {
+    if (!deduped.includes(item)) deduped.push(item);
+    if (deduped.length >= 3) break;
+  }
+
+  return deduped.join(' > ').slice(0, 180).trim();
+}
+
+function findPrecedingSnippet(element: Element): string {
+  const prev = element.previousElementSibling;
+  if (!prev || shouldSkipElement(prev)) return '';
+  if (!prev.matches('p, li, dd, dt, blockquote')) return '';
+  const text = extractCleanNodeText(prev);
+  if (text.length < 12) return '';
+  return text.length > 180 ? text.slice(-180) : text;
+}
+
+/**
+ * Build zero-latency structural context (title, site, meta, section breadcrumb,
+ * and immediate preceding text) to help the LLM disambiguate terminology.
+ */
+export function buildPageContext(element?: Element | null): string {
+  if (typeof document === 'undefined') return '';
+  const lines: string[] = [];
+
+  const title = document.title?.replace(/\s+/g, ' ').trim();
+  if (title) lines.push(`Title: ${title.slice(0, 160)}`);
+
+  if (typeof location !== 'undefined' && location.hostname) {
+    lines.push(`Site: ${location.hostname}`);
+  }
+
+  const meta = getPageMetadataSummary();
+  if (meta) lines.push(`Meta: ${meta}`);
+
+  if (element) {
+    const section = findSectionBreadcrumb(element);
+    if (section) lines.push(`Section: ${section}`);
+    const preceding = findPrecedingSnippet(element);
+    if (preceding) lines.push(`Preceding text: ${preceding}`);
+  }
+
+  return lines.join('\n');
 }
 
 /**
@@ -226,16 +386,17 @@ function extractTextFromRoot(root: Element): string {
 
 /**
  * Fallback: collect text from paragraph-like elements across the page,
- * sorted by text length (longest first), to approximate the main content.
- * This works well for pages without semantic <article>/<main> containers.
+ * prioritizing headings and dense prose blocks while restoring their natural
+ * document order so the summary preserves logical flow.
  */
 function extractTextByDensity(): string {
-  const blocks: { el: Element; text: string }[] = [];
+  const blocks: { el: Element; text: string; index: number; isHeading: boolean }[] = [];
 
-  // Collect all paragraph-like text blocks
+  // Collect all paragraph-like text blocks in DOM order
   const allElements = document.body.querySelectorAll(
     'p, li, blockquote, dd, td, th, figcaption, h1, h2, h3, h4, h5, h6',
   );
+  let index = 0;
   for (const el of allElements) {
     // Skip page chrome, extension UI, and hidden containers at any depth.
     if (shouldSkipElement(el)) continue;
@@ -243,26 +404,40 @@ function extractTextByDensity(): string {
     const style = window.getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden') continue;
 
-    const text = el.textContent?.trim() || '';
-    // Only keep blocks with meaningful text (>20 chars, likely real content)
-    if (text.length > 20) {
-      blocks.push({ el, text });
+    const text = extractCleanNodeText(el);
+    const isHeading = /^H[1-3]$/.test(el.tagName);
+    if ((isHeading && text.length > 3) || text.length > 20) {
+      blocks.push({ el, text, index: index++, isHeading });
     }
   }
 
-  // Sort by text length descending: longer paragraphs are more likely to be body content
-  blocks.sort((a, b) => b.text.length - a.text.length);
+  // Prioritize headings and early lead paragraphs, then longer body blocks
+  const prioritized = [...blocks].sort((a, b) => {
+    const aPriority = a.isHeading || a.index < 5 ? 1 : 0;
+    const bPriority = b.isHeading || b.index < 5 ? 1 : 0;
+    if (aPriority !== bPriority) return bPriority - aPriority;
+    return b.text.length - a.text.length;
+  });
 
-  const parts: string[] = [];
+  const selected: typeof blocks = [];
   let totalLength = 0;
 
-  for (const block of blocks) {
-    parts.push(block.text);
-    totalLength += block.text.length;
+  for (const block of prioritized) {
+    const separatorLen = selected.length === 0 ? 0 : 2;
+    if (totalLength + separatorLen + block.text.length > MAX_TEXT_LENGTH && selected.length > 0) {
+      break;
+    }
+    selected.push(block);
+    totalLength += separatorLen + block.text.length;
     if (totalLength >= MAX_TEXT_LENGTH) break;
   }
 
-  return parts.join(' ').slice(0, MAX_TEXT_LENGTH);
+  // Restore original DOM sequence so headings, intro, and definitions stay coherent
+  selected.sort((a, b) => a.index - b.index);
+  return selected
+    .map((block) => block.text)
+    .join('\n\n')
+    .slice(0, MAX_TEXT_LENGTH);
 }
 
 /**
@@ -314,6 +489,15 @@ export function extractPageText(): string {
     return '';
   }
 
+  const headerLines: string[] = [];
+  const title = document.title?.replace(/\s+/g, ' ').trim();
+  if (title) headerLines.push(`Title: ${title}`);
+  const meta = getPageMetadataSummary();
+  if (meta) headerLines.push(`Meta: ${meta}`);
+  if (headerLines.length > 0) {
+    result = `${headerLines.join('\n')}\n\n${result}`.slice(0, MAX_TEXT_LENGTH);
+  }
+
   debugLog('Extracted text length:', result.length, '| Preview:', result.slice(0, 200) + '...');
   return result;
 }
@@ -321,7 +505,8 @@ export function extractPageText(): string {
 // --- Summary cache helpers ---
 
 function getSummaryCacheKey(): string {
-  return `${SUMMARY_CACHE_PREFIX}${location.href}`;
+  const href = typeof location !== 'undefined' ? location.href : '';
+  return `${SUMMARY_CACHE_PREFIX}${href}`;
 }
 
 export function getCachedSummary(): string | null {
@@ -361,11 +546,27 @@ export function cancelSummaryRequest(): void {
     currentSummaryAbort.abort();
     currentSummaryAbort = null;
   }
+  inFlightSummaryPromise = null;
+}
+
+/**
+ * Trigger a background non-blocking page summary if enabled and not yet cached/running,
+ * allowing hover and selection translations to benefit on subsequent requests.
+ */
+export function warmUpPageSummary(): void {
+  if (typeof document === 'undefined' || !document.body) return;
+  if (!config.enablePageSummary || currentPageSummary || inFlightSummaryPromise) return;
+  const cached = getCachedSummary();
+  if (cached) {
+    currentPageSummary = cached;
+    return;
+  }
+  void requestPageSummary().catch(() => {});
 }
 
 /**
  * Request a page summary from the current translation service.
- * - Checks cache first.
+ * - Checks cache first and deduplicates concurrent requests.
  * - Extracts page text and sends a summary request via background script.
  * - Stores the result in `currentPageSummary` for use by translation prompts.
  * - Always non-streaming (we need the full result before translations begin).
@@ -374,6 +575,18 @@ export function cancelSummaryRequest(): void {
  * @returns The summary text, or empty string on failure/skip
  */
 export async function requestPageSummary(): Promise<string> {
+  if (inFlightSummaryPromise) return inFlightSummaryPromise;
+
+  const promise = runPageSummaryRequest().finally(() => {
+    if (inFlightSummaryPromise === promise) {
+      inFlightSummaryPromise = null;
+    }
+  });
+  inFlightSummaryPromise = promise;
+  return promise;
+}
+
+async function runPageSummaryRequest(): Promise<string> {
   debugLog(
     'requestPageSummary() called. enablePageSummary:',
     config.enablePageSummary,

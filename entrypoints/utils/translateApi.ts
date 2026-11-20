@@ -12,10 +12,12 @@ import { config } from './config';
 import { cache } from './cache';
 import { detectlang, getCjkLanguageTag } from './common';
 import { storage } from '@wxt-dev/storage';
-import { getCurrentPageSummary } from './pageSummary';
+import { servicesType } from './option';
+import { buildPageContext, getCurrentPageSummary, warmUpPageSummary } from './pageSummary';
 import { TRANSLATION_COUNT_KEY, normalizeTranslationCount } from './constant';
 
 const isDev = process.env.NODE_ENV === 'development';
+const inFlightTranslations = new Map<string, Promise<string>>();
 
 const TRUNCATION_CHECK_MIN_SOURCE_CHARS = 2000;
 const TRUNCATION_MIN_LENGTH_RATIO = 0.25;
@@ -449,7 +451,7 @@ async function flushTranslationCount(): Promise<void> {
 /** Unified non-streaming translation entry point. */
 export async function translateText(
   origin: string,
-  context: string = typeof document === 'undefined' ? '' : document.title,
+  context: string = typeof document === 'undefined' ? '' : buildPageContext(),
   options: TranslateOptions = {},
 ): Promise<string> {
   const {
@@ -467,14 +469,28 @@ export async function translateText(
 
   if (detectlang(origin.replace(/[\s\u3000]/g, '')) === config.to) return origin;
 
-  if (useCache && !bypassCacheRead) {
+  const shouldDedupe = useCache && !bypassCacheRead;
+  const inFlightKey = shouldDedupe ? `${config.service}:${config.to}:${cacheKey}` : '';
+  if (shouldDedupe) {
+    const existing = inFlightTranslations.get(inFlightKey);
+    if (existing) return existing;
+  }
+
+  if (shouldDedupe) {
     const cachedResult = await cache.localGet(cacheKey);
     if (cachedResult) return cachedResult;
+
+    const existingAfterCache = inFlightTranslations.get(inFlightKey);
+    if (existingAfterCache) return existingAfterCache;
+  }
+
+  if (config.enablePageSummary && servicesType.isUseModel(config.service)) {
+    warmUpPageSummary();
   }
 
   const chunks = splitIntoTranslationChunks(origin);
 
-  return enqueueTranslation(async (signal) => {
+  const taskPromise = enqueueTranslation(async (signal) => {
     throwIfAborted(signal);
 
     const attempt = async (chunkOrigin: string, retryCount: number): Promise<string> => {
@@ -521,11 +537,22 @@ export async function translateText(
     if (useCache) void cache.localSet(cacheKey, combined);
     return combined;
   });
+
+  if (!shouldDedupe) return taskPromise;
+
+  const trackedPromise = taskPromise.finally(() => {
+    if (inFlightTranslations.get(inFlightKey) === trackedPromise) {
+      inFlightTranslations.delete(inFlightKey);
+    }
+  });
+  inFlightTranslations.set(inFlightKey, trackedPromise);
+  return trackedPromise;
 }
 
 /** Cancel queued requests and abort active transports. */
 export function cancelAllTranslations(): void {
   if (isDev) console.log('[翻译API] 取消所有等待中的翻译任务');
+  inFlightTranslations.clear();
   clearTranslationQueue();
 }
 
@@ -546,7 +573,7 @@ export interface TranslateOptions {
 /** Streaming translation over a cancellable runtime Port. */
 export async function translateTextStream(
   origin: string,
-  context: string = typeof document === 'undefined' ? '' : document.title,
+  context: string = typeof document === 'undefined' ? '' : buildPageContext(),
   onChunk: (accumulated: string) => void,
   options: TranslateOptions = {},
 ): Promise<string> {
@@ -561,6 +588,10 @@ export async function translateTextStream(
   if (useCache && !bypassCacheRead) {
     const cachedResult = await cache.localGet(cacheKey);
     if (cachedResult) return cachedResult;
+  }
+
+  if (config.enablePageSummary && servicesType.isUseModel(config.service)) {
+    warmUpPageSummary();
   }
 
   const chunks = splitIntoTranslationChunks(origin);

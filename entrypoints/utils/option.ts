@@ -200,6 +200,12 @@ export const options = {
   ],
 };
 
+export const LEGACY_DEFAULT_SYSTEM_ROLE =
+  'You are a professional, authentic machine translation engine.';
+export const LEGACY_DEFAULT_USER_ROLE = `Translate the following text into {{to}}, If translation is unnecessary (e.g. proper nouns, codes, etc.), return the original text. NO explanations. NO notes:
+
+{{origin}}`;
+
 export const defaultOption = {
   on: true,
   from: 'auto',
@@ -209,11 +215,41 @@ export const defaultOption = {
   hotkey: 'Control',
   service: defaultServiceForBrowser(),
   custom: 'http://localhost:11434/v1/chat/completions',
-  system_role: 'You are a professional, authentic machine translation engine.',
-  user_role: `Translate the following text into {{to}}, If translation is unnecessary (e.g. proper nouns, codes, etc.), return the original text. NO explanations. NO notes:
+  system_role:
+    'You are an expert bilingual translator specializing in academic, technical, and professional content. Infer the domain from context, use accurate domain-specific terminology, preserve code identifiers, formulas, and untranslatable proper nouns in their original form, and produce natural, rigorous target-language prose.',
+  user_role: `Translate the following text into {{to}}. Preserve inline code, formulas, technical identifiers, and untranslatable proper nouns in their original form. Output ONLY the translation without any explanations or notes:
 
 {{origin}}`,
   count: 0,
   useCache: true,
   floatingBallHotkey: 'Alt+T', // 默认悬浮球快捷键
 };
+
+/**
+ * Seamlessly upgrade untouched legacy default prompts to the improved
+ * professional prompts without overwriting user-customized prompts.
+ */
+export function migrateDefaultPrompts(cfg: {
+  system_role?: Record<string, string>;
+  user_role?: Record<string, string>;
+}): boolean {
+  let changed = false;
+  if (cfg.system_role && typeof cfg.system_role === 'object') {
+    for (const key of Object.keys(cfg.system_role)) {
+      if (cfg.system_role[key]?.trim() === LEGACY_DEFAULT_SYSTEM_ROLE) {
+        cfg.system_role[key] = defaultOption.system_role;
+        changed = true;
+      }
+    }
+  }
+  if (cfg.user_role && typeof cfg.user_role === 'object') {
+    for (const key of Object.keys(cfg.user_role)) {
+      const normalized = cfg.user_role[key]?.replace(/\r\n/g, '\n').trim();
+      if (normalized === LEGACY_DEFAULT_USER_ROLE) {
+        cfg.user_role[key] = defaultOption.user_role;
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}

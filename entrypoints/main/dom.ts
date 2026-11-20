@@ -151,6 +151,7 @@ const allowedTranslationTags = new Set([
   'rp',
   'rt',
   's',
+  'samp',
   'small',
   'span',
   'strong',
@@ -337,10 +338,63 @@ function hasSkippedAncestor(element: Element): boolean {
   return false;
 }
 
+const INLINE_CODE_LIKE_TAGS = new Set(['code', 'kbd', 'samp', 'var']);
+const MATH_CONTAINER_SELECTOR =
+  'math, mjx-container, .mwe-math-element, .katex, .MathJax, .math-inline, .math-tex';
+
+function isInlineMathElement(element: Element): boolean {
+  if (!element.matches(MATH_CONTAINER_SELECTOR)) return false;
+  if (element.parentElement?.closest(MATH_CONTAINER_SELECTOR)) return false;
+  return true;
+}
+
+function cleanTeXAnnotation(raw: string): string {
+  return raw
+    .replace(/^\s*\{\\displaystyle\s*([\s\S]*?)\}\s*$/, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractInlineMathText(element: Element): string {
+  const annotation = element.querySelector('annotation[encoding*="tex" i]')?.textContent?.trim();
+  const attrText =
+    element.getAttribute('alttext') ||
+    element.querySelector('[alttext]')?.getAttribute('alttext') ||
+    element
+      .querySelector('img.mwe-math-fallback-image-inline, img.mwe-math-fallback-image-display')
+      ?.getAttribute('alt') ||
+    element.getAttribute('aria-label');
+
+  const tex = cleanTeXAnnotation(annotation || attrText || '');
+  if (tex) {
+    return tex.startsWith('$') ? tex : `$${tex}$`;
+  }
+
+  const mathNode =
+    element.tagName.toLowerCase() === 'math' ? element : element.querySelector('math');
+  if (mathNode) {
+    const clone = mathNode.cloneNode(true) as Element;
+    clone.querySelectorAll('annotation, annotation-xml').forEach((node) => node.remove());
+    const mathText = clone.textContent?.replace(/\s+/g, ' ').trim() || '';
+    if (mathText) return mathText;
+  }
+
+  return element.textContent?.replace(/\s+/g, ' ').trim() || '';
+}
+
+function formatInlineCodeText(text: string): string {
+  const cleaned = text.replace(/\s+/g, ' ').trim();
+  if (!cleaned) return '';
+  if (/[A-Za-z_$/\\-]/.test(cleaned) && !cleaned.includes('`') && cleaned.length <= 80) {
+    return `\`${cleaned}\``;
+  }
+  return cleaned;
+}
+
 /**
  * Text that remains after removing non-content subtrees from a translation unit.
- * Inline code can be retained as context without making a code-only wrapper
- * eligible for translation.
+ * Inline code and math expressions can be retained as context without making a
+ * code-only or math-only wrapper eligible for translation.
  */
 export function getTranslatableText(element: Element, includeInlineCode = true): string {
   if (hasSkippedAncestor(element)) return '';
@@ -351,24 +405,31 @@ export function getTranslatableText(element: Element, includeInlineCode = true):
       return;
     }
     if (!(node instanceof Element)) return;
-    // Code is not a standalone translation candidate, but inline code often
-    // supplies an essential subject or API name for the surrounding prose.
-    // Keep its literal text in that prose unit so bilingual output does not
-    // turn "only in draw(...)" into "only in".
-    if (
-      includeInlineCode &&
-      node.tagName.toLowerCase() === 'code' &&
-      !isOwnedElement(node) &&
-      isVisible(node)
-    ) {
-      if (node.textContent) parts.push(node.textContent);
+    if (isOwnedElement(node)) return;
+
+    // Inline math containers (KaTeX, MathJax, Wikipedia MathML) often carry
+    // `aria-hidden="true"` or `notranslate`, or use <math> which is in skipSet.
+    // Extract their formula representation before visibility/skip checks so
+    // surrounding sentences do not lose subjects or objects.
+    if (isInlineMathElement(node)) {
+      if (!includeInlineCode || node.hasAttribute('hidden')) return;
+      const mathText = extractInlineMathText(node);
+      if (mathText) parts.push(mathText);
       return;
     }
-    if (
-      isSkippedElement(node) ||
-      isOwnedElement(node) ||
-      !isVisible(node)
-    ) {
+
+    // Code/kbd/samp/var are not standalone translation candidates, but inline
+    // code often supplies an essential subject or API name for the surrounding
+    // prose. Wrap ASCII/symbol identifiers in backticks so LLMs keep them intact.
+    const tag = node.tagName.toLowerCase();
+    if (INLINE_CODE_LIKE_TAGS.has(tag)) {
+      if (!includeInlineCode || !isVisible(node)) return;
+      const formatted = formatInlineCodeText(node.textContent || '');
+      if (formatted) parts.push(formatted);
+      return;
+    }
+
+    if (isSkippedElement(node) || !isVisible(node)) {
       return;
     }
     node.childNodes.forEach(visit);
@@ -928,17 +989,28 @@ export function LLMStandardHTML(node: Element): string {
     if (!(current instanceof Element)) return '';
 
     const tag = current.tagName.toLowerCase();
-    // Keep serialization consistent with getTranslatableText(). In
-    // particular, a visible parent may contain hidden or translate="no"
-    // descendants that must not leak into the request.
-    if (isOwnedElement(current) || !isVisible(current)) return '';
+    // Keep serialization consistent with getTranslatableText().
+    if (isOwnedElement(current)) return '';
 
-    // A code element must not become a translation unit of its own, but it
-    // must stay in an enclosing prose unit. Preserve only its literal text:
-    // page-provided markup inside code is presentation, not translatable
+    if (isInlineMathElement(current)) {
+      if (current.hasAttribute('hidden')) return '';
+      const mathText = extractInlineMathText(current);
+      if (!mathText) return '';
+      const mathEl = document.createElement('var');
+      mathEl.textContent = mathText;
+      return mathEl.outerHTML;
+    }
+
+    // In particular, a visible parent may contain hidden or translate="no"
+    // descendants that must not leak into the request.
+    if (!isVisible(current)) return '';
+
+    // Code-like inline elements must not become standalone translation units,
+    // but must stay in an enclosing prose unit. Preserve only their literal
+    // text: page-provided markup inside code is presentation, not translatable
     // structure, and could otherwise reintroduce a skipped subtree.
-    if (tag === 'code') {
-      const code = document.createElement('code');
+    if (INLINE_CODE_LIKE_TAGS.has(tag)) {
+      const code = document.createElement(tag);
       code.textContent = current.textContent || '';
       return code.outerHTML;
     }

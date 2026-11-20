@@ -2,7 +2,7 @@ import { commonMsgTemplate } from '../utils/template';
 import { method } from '../utils/constant';
 import { services } from '@/entrypoints/utils/option';
 import { config } from '@/entrypoints/utils/config';
-import { contentPostHandler } from '@/entrypoints/utils/check';
+import { contentPostHandler, sanitizeStreamPreview } from '@/entrypoints/utils/check';
 import { cloudflareFailureMessage } from '@/entrypoints/utils/cloudflareError';
 import { assertSecureFirefoxEndpoint, firefoxRedirectMode } from '@/entrypoints/utils/network';
 import {
@@ -31,13 +31,16 @@ function requestCustomEndpoint(
 }
 
 async function custom(message: any, signal?: AbortSignal) {
-  // Read page summary from message (passed from content script where it was generated)
+  // Read page summary and structural context from message (passed from content script)
   const pageSummary = config.enablePageSummary ? message.pageSummary || undefined : undefined;
+  const pageContext = typeof message.context === 'string' ? message.context : undefined;
 
   if (config.debugMode) {
     console.log(
       '[Catgirl Read Debug] custom() - translating:',
       message.origin?.slice(0, 100),
+      '| pageContext:',
+      !!pageContext,
       '| pageSummary injected:',
       !!pageSummary,
     );
@@ -46,7 +49,7 @@ async function custom(message: any, signal?: AbortSignal) {
     }
   }
 
-  const request = commonMsgTemplate(message.origin, pageSummary);
+  const request = commonMsgTemplate(message.origin, pageSummary, pageContext);
   const resp = await requestCustomEndpoint(
     config.custom,
     config.token[services.custom],
@@ -265,8 +268,10 @@ async function parseStreamResponse(resp: Response, port: any, signal?: AbortSign
         const delta = openAiStreamDelta(line);
         if (!delta) continue;
         result += delta;
+        const preview = sanitizeStreamPreview(result);
+        if (!preview) continue;
         try {
-          port.postMessage({ type: 'stream-chunk', chunk: delta, accumulated: result });
+          port.postMessage({ type: 'stream-chunk', chunk: delta, accumulated: preview });
         } catch {
           throwIfAborted(signal);
           return contentPostHandler(result);

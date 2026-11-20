@@ -25,9 +25,11 @@ import {
   incrementTranslationCount,
 } from '@/entrypoints/utils/translateApi';
 import {
+  buildPageContext,
   requestPageSummary,
   cancelSummaryRequest,
   clearCurrentPageSummary,
+  warmUpPageSummary,
 } from '@/entrypoints/utils/pageSummary';
 
 const TRANSLATED_ATTR = 'data-fr-translated';
@@ -48,6 +50,7 @@ interface TranslationRecord {
   originalOuterHTML: string;
   originalText: string;
   requestHTML: string;
+  contextInfo: string;
   generation: number;
   status: RecordStatus;
   lastOwnedHTML: string;
@@ -62,6 +65,7 @@ interface TranslationContext {
   sourceOuterHTML: string;
   sourceText: string;
   requestHTML: string;
+  contextInfo: string;
   lastOwnedHTML: string;
   spinner?: HTMLElement;
   originalFragment?: DocumentFragment;
@@ -221,6 +225,7 @@ function createRecord(element: Element, generation: number): TranslationRecord |
     originalOuterHTML: element.outerHTML,
     originalText: getTranslatableText(element),
     requestHTML: LLMStandardHTML(element),
+    contextInfo: buildPageContext(element),
     generation,
     status: 'pending',
     lastOwnedHTML: element.innerHTML,
@@ -275,6 +280,7 @@ function beginContext(element: HTMLElement, forceRetry = false): TranslationCont
     sourceOuterHTML: record?.originalOuterHTML ?? element.outerHTML,
     sourceText: record?.originalText ?? getTranslatableText(element),
     requestHTML: record?.requestHTML ?? LLMStandardHTML(element),
+    contextInfo: record?.contextInfo ?? buildPageContext(element),
     lastOwnedHTML: record?.originalHTML ?? element.innerHTML,
   };
   return context;
@@ -462,12 +468,16 @@ function runBilingualTranslation(context: TranslationContext, forceBypassCache: 
     syncOwnedContent(context);
   };
 
+  if (config.enablePageSummary && servicesType.isUseModel(config.service) && !isAutoTranslating) {
+    warmUpPageSummary();
+  }
+
   const request = config.useStream && servicesType.isCustom(config.service)
-    ? translateTextStream(origin, document.title, onStreamChunk, {
+    ? translateTextStream(origin, context.contextInfo, onStreamChunk, {
         bypassCacheRead: forceBypassCache,
         cacheKey: bilingualCacheKey(context),
       })
-    : translateText(origin, document.title, {
+    : translateText(origin, context.contextInfo, {
         bypassCacheRead: forceBypassCache,
         cacheKey: bilingualCacheKey(context),
       });
@@ -523,12 +533,16 @@ function runSingleTranslation(context: TranslationContext, forceBypassCache: boo
     syncOwnedContent(context);
   };
 
+  if (config.enablePageSummary && servicesType.isUseModel(config.service) && !isAutoTranslating) {
+    warmUpPageSummary();
+  }
+
   const request = config.useStream && servicesType.isCustom(config.service)
-    ? translateTextStream(origin, document.title, onStreamChunk, {
+    ? translateTextStream(origin, context.contextInfo, onStreamChunk, {
         bypassCacheRead: forceBypassCache,
         cacheKey: singleCacheKey(context),
       })
-    : translateText(origin, document.title, {
+    : translateText(origin, context.contextInfo, {
         bypassCacheRead: forceBypassCache,
         cacheKey: singleCacheKey(context),
       });
@@ -569,6 +583,7 @@ export function restoreOriginalContent(): void {
       sourceOuterHTML: record.originalOuterHTML,
       sourceText: record.originalText,
       requestHTML: record.requestHTML,
+      contextInfo: record.contextInfo,
       lastOwnedHTML: record.lastOwnedHTML,
     };
     const canRestore = element.isConnected && contentMatches(context);
