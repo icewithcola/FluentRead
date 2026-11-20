@@ -4,7 +4,6 @@ import 'element-plus/es/components/message/style/css';
 import { handleBilingualTranslation, handleSingleTranslation } from '@/entrypoints/main/trans';
 import { config } from '@/entrypoints/utils/config';
 import { styles } from '@/entrypoints/utils/constant';
-import { services, options } from './option';
 
 const icon = {
   retry: `<svg fill="none" viewBox="0 0 40 40" height="40" width="40" style="display: inline; align-items: center; justify-content: center; width: 1em; height: 1em; margin-left: 1em; pointer-events: none;">
@@ -34,7 +33,7 @@ export function insertFailedTip(node: HTMLElement, errMsg: string, spinner: HTML
 
   // 创建错误信息提示按钮
   const errorTip = document.createElement('span');
-  errorTip.innerText = '错误原因';
+  errorTip.innerText = '查看原因';
   errorTip.classList.add('fluent-read-reason');
   errorTip.addEventListener('click', handleErrorClick(errMsg));
 
@@ -76,31 +75,63 @@ function handleErrorClick(errMsg: string) {
   };
 }
 
-// 根据错误信息返回错误提示
+// 根据错误信息返回人话错误提示
 function getErrorMessage(errMsg: string): string {
+  const cleaned = (errMsg || '').replace(/^Error:\s*/i, '').trim();
+  const lower = cleaned.toLowerCase();
+
   // Cloudflare pages include phrases like "A timeout occurred"; keep the parsed
   // Ray ID / error code instead of collapsing them into the generic timeout tip.
-  if (/Cloudflare/i.test(errMsg)) {
-    return errMsg.replace(/^Error:\s*/, '');
+  if (/cloudflare/i.test(cleaned)) {
+    return cleaned;
   }
-  if (errMsg.includes('auth failed') || errMsg.includes('API key')) {
-    return 'Token 似乎有点问题，请前往设置页面重新配置后再试。';
-  } else if (errMsg.includes('quota') || errMsg.includes('limit')) {
-    const service = options.services.find(
-      (s: { value: string; label: string }) => s.value === config.service,
-    );
-    return (
-      '你的请求频率过高，被【' + (service?.label || config.service) + '】拒绝了，请稍后再试吧~'
-    );
-  } else if (errMsg.includes('network error')) {
-    return '网络连接好像不稳定，请检查网络后再试。';
-  } else if (errMsg.includes('model')) {
-    return '模型配置可能有误，请前往设置页面进行检查和调整。';
-  } else if (errMsg.includes('timeout')) {
-    return '请求超时啦，请稍后再试一次。';
-  } else {
-    return errMsg || '出现了未知错误，请前往开源社区联系开发者吧~';
+  if (
+    /\b(401|403)\b/.test(lower) ||
+    lower.includes('unauthorized') ||
+    lower.includes('invalid_api_key') ||
+    lower.includes('incorrect api key') ||
+    lower.includes('auth failed') ||
+    lower.includes('api key')
+  ) {
+    return 'API Key 无效或已失效，请在插件设置中检查后再试。';
   }
+  if (
+    /\b429\b/.test(lower) ||
+    lower.includes('quota') ||
+    lower.includes('rate limit') ||
+    lower.includes('too many requests') ||
+    lower.includes('limit')
+  ) {
+    return '请求过于频繁或接口额度已用尽，请稍后再试，或在设置中调低“同时翻译段落数”。';
+  }
+  if (/\b404\b/.test(lower) || lower.includes('not found')) {
+    return '找不到该接口地址或模型（404），请检查设置中的 API 地址和模型名。';
+  }
+  if (
+    /\b(500|502|503|504)\b/.test(lower) ||
+    lower.includes('bad gateway') ||
+    lower.includes('service unavailable')
+  ) {
+    return '翻译服务暂时繁忙或不可用，请稍后重试。';
+  }
+  if (lower.includes('model')) {
+    return '模型不可用或名称有误，请在插件设置中检查模型配置。';
+  }
+  if (lower.includes('timeout') || lower.includes('timed out') || cleaned.includes('超时')) {
+    return '翻译请求超时，请检查网络连接或稍后重试。';
+  }
+  if (
+    lower.includes('failed to fetch') ||
+    lower.includes('network') ||
+    cleaned.includes('断开') ||
+    cleaned.includes('网络')
+  ) {
+    return '网络连接失败，请检查网络或 API 地址是否可访问。';
+  }
+  if (!cleaned) {
+    return '翻译失败，请稍后重试。';
+  }
+  return cleaned.length > 160 ? `${cleaned.slice(0, 160)}…` : cleaned;
 }
 
 // 创建图标元素

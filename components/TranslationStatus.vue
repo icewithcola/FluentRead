@@ -5,19 +5,17 @@
   >
     <div class="translation-status-card">
       <div class="translation-status-header">
-        <div class="translation-status-title">翻译进度</div>
+        <div class="translation-status-title">正在翻译网页…</div>
         <div class="translation-status-close" @click="close">×</div>
       </div>
       <div class="translation-status-content">
         <div class="translation-status-row">
-          <div class="translation-status-label">当前活跃任务:</div>
-          <div class="translation-status-value">
-            {{ status.activeTranslations }} / {{ status.maxConcurrent }}
-          </div>
+          <div class="translation-status-label">正在翻译</div>
+          <div class="translation-status-value">{{ status.activeTranslations }} 段</div>
         </div>
         <div class="translation-status-row">
-          <div class="translation-status-label">等待中的任务:</div>
-          <div class="translation-status-value">{{ status.pendingTranslations }}</div>
+          <div class="translation-status-label">排队等待</div>
+          <div class="translation-status-value">{{ status.pendingTranslations }} 段</div>
         </div>
         <div class="translation-status-progress">
           <div class="translation-status-progress-bar" :style="progressStyle"></div>
@@ -35,6 +33,7 @@ import { getTranslationStatus } from '../entrypoints/utils/translateApi';
 const isVisible = ref(false);
 const isFloatingBallTranslating = ref(false);
 const userClosed = ref(false); // 用户是否关闭了状态框
+const totalSeen = ref(0);
 const status = ref({
   activeTranslations: 0,
   pendingTranslations: 0,
@@ -45,10 +44,18 @@ const status = ref({
 
 // 计算进度条样式
 const progressStyle = computed(() => {
-  const percent = (status.value.activeTranslations / status.value.maxConcurrent) * 100;
+  const remaining = status.value.activeTranslations + status.value.pendingTranslations;
+  if (totalSeen.value <= 0 || remaining <= 0) {
+    return {
+      width: '0%',
+      background: 'linear-gradient(90deg, #3498db, #00cec9)',
+    };
+  }
+  const completed = Math.max(0, totalSeen.value - remaining);
+  const percent = Math.max(6, Math.min(100, Math.round((completed / totalSeen.value) * 100)));
   return {
     width: `${percent}%`,
-    backgroundColor: percent > 80 ? '#ff7675' : percent > 50 ? '#fdcb6e' : '#00cec9',
+    background: 'linear-gradient(90deg, #3498db, #00cec9)',
   };
 });
 
@@ -59,15 +66,15 @@ const close = () => {
 
 // 重置关闭状态 - 当用户离开页面后重置
 const resetClosedState = () => {
-  // 监听页面可见性变化
-  document.addEventListener('visibilitychange', () => {
+  const handleVisibilityChange = () => {
     if (document.visibilityState === 'hidden') {
       // 当页面不可见时（用户切换标签页或最小化），重置状态
       setTimeout(() => {
         userClosed.value = false;
       }, 1000);
     }
-  });
+  };
+  document.addEventListener('visibilitychange', handleVisibilityChange);
 
   // 监听 URL 变化
   const lastUrl = location.href;
@@ -81,7 +88,7 @@ const resetClosedState = () => {
   urlObserver.observe(document, { subtree: true, childList: true });
 
   return () => {
-    document.removeEventListener('visibilitychange', () => {});
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
     urlObserver.disconnect();
   };
 };
@@ -94,8 +101,14 @@ const updateStatus = () => {
   const currentStatus = getTranslationStatus();
   status.value = currentStatus;
 
-  // 只有当有活跃任务或等待任务时才显示状态卡片
-  isVisible.value = currentStatus.activeTranslations > 0 || currentStatus.pendingTranslations > 0;
+  const remaining = currentStatus.activeTranslations + currentStatus.pendingTranslations;
+  if (remaining > 0) {
+    totalSeen.value = Math.max(totalSeen.value, remaining);
+    isVisible.value = true;
+  } else {
+    totalSeen.value = 0;
+    isVisible.value = false;
+  }
 };
 
 // 监听悬浮球翻译状态变化
@@ -103,6 +116,7 @@ const listenToFloatingBallState = () => {
   // 监听自定义事件: 翻译开始
   const handleTranslationStarted = () => {
     isFloatingBallTranslating.value = true;
+    totalSeen.value = 0;
     // 当新的翻译开始时，如果是同一页面内重新开始翻译，也要重置用户关闭状态
     if (!isVisible.value) {
       userClosed.value = false;
@@ -112,6 +126,7 @@ const listenToFloatingBallState = () => {
   // 监听自定义事件: 翻译结束
   const handleTranslationEnded = () => {
     isFloatingBallTranslating.value = false;
+    totalSeen.value = 0;
   };
 
   // 添加事件监听器

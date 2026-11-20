@@ -1,19 +1,12 @@
 // 消息模板工具
-import { customModelString, defaultOption } from './option';
+import { defaultOption } from './option';
 import { config } from '@/entrypoints/utils/config';
 import { isCantonese } from './common';
+import { openAiModel, type OpenAiRequest } from './openai';
 
 // openai 格式的消息模板（通用模板）
 // pageSummary: optional page summary context to inject into the prompt for better translation
-export function commonMsgTemplate(origin: string, pageSummary?: string) {
-  // 检测是否使用自定义模型
-  let model =
-    config.model[config.service] === customModelString
-      ? config.customModel[config.service]
-      : config.model[config.service];
-
-  // 删除模型名称中的中文括号及其内容，如"gpt-4（推荐）" -> "gpt-4"
-  model = model.replace(/（.*）/g, '');
+export function commonMsgTemplate(origin: string, pageSummary?: string): OpenAiRequest {
 
   let system = config.system_role[config.service] || defaultOption.system_role;
 
@@ -35,8 +28,8 @@ export function commonMsgTemplate(origin: string, pageSummary?: string) {
     system += `\n\nPage context for reference (use this to improve translation accuracy, especially for proper nouns and domain-specific terms):\n${pageSummary}`;
   }
 
-  const body: any = {
-    model: model,
+  const body: OpenAiRequest = {
+    model: openAiModel(config),
     temperature: 0.7,
     messages: [
       { role: 'system', content: system },
@@ -49,7 +42,7 @@ export function commonMsgTemplate(origin: string, pageSummary?: string) {
     body.stream = true;
   }
 
-  return JSON.stringify(body);
+  return body;
 }
 
 /**
@@ -59,16 +52,7 @@ export function commonMsgTemplate(origin: string, pageSummary?: string) {
  */
 export function summaryMsgTemplate(content: string) {
   // Use summary-specific model if configured, otherwise fall back to translation model
-  let model: string;
-  if (config.summaryModel) {
-    model = config.summaryModel;
-  } else {
-    model =
-      config.model[config.service] === customModelString
-        ? config.customModel[config.service]
-        : config.model[config.service];
-  }
-  model = model.replace(/（.*）/g, '');
+  const model = config.summaryModel?.replace(/（.*）/g, '').trim() || openAiModel(config);
 
   if (config.debugMode) {
     console.log(

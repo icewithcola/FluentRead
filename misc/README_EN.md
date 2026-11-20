@@ -14,6 +14,7 @@
 <p align="center">
   <a href="https://fluent.thinkstu.com/">Documentation</a> ·
   <a href="https://fluent.thinkstu.com/guide/getting-started">Get the extension</a> ·
+  <a href="../PRIVACY.md">Privacy policy</a> ·
   <a href="https://github.com/icewithcola/FluentRead">GitHub</a>
 </p>
 
@@ -27,7 +28,7 @@ Whether you are reading papers, technical docs, or simply wandering the web, it 
 
 ## ✨ What it can do today
 
-- **Three translation routes**: Built-in Google Translate (bilingual mode), Chrome's built-in Translation API, and a configurable OpenAI-compatible Chat Completions endpoint. The custom route supports a URL, API key, model, prompt templates, and SSE streaming.
+- **Three translation routes**: Built-in Google Translate (bilingual mode), Chrome's built-in Translation API, and OpenAI-compatible Chat Completions and Responses endpoints. Both endpoint formats support SSE streaming. The settings panel detects and saves a working endpoint when you enter a base URL, API key, and model. Use **Test endpoint** to check the connection manually.
 - **Translate and restore whole pages**: Use the floating button, a shortcut, or the context menu to translate a page, then restore its original content without reloading.
 - **Bilingual or translation-only output**: Keep the source text with its translation or replace it with the translation; bilingual mode includes several display styles.
 - **Selection translation**: Select text and hover the indicator that appears to open its translation. It supports bilingual/translation-only display, copying the translation, and browser text-to-speech for either text.
@@ -35,7 +36,7 @@ Whether you are reading papers, technical docs, or simply wandering the web, it 
 - **Context enhancement**: When translating a full page with the custom endpoint, you can optionally generate a page summary and include it as translation context.
 - **Local settings, provider-bound requests**: Extension settings and translation cache stay in the browser. The translation cache is a 128MB LRU (100MB of translations, 28MB reserved for metadata); entries expire after 1 month without use. Text to translate is sent to the translation service you choose, so use it in accordance with that provider's privacy policy.
 
-> **Service scope:** This project does not ship separate built-in adapters for Microsoft, DeepL, DeepSeek, Kimi, Ollama, or other providers. A provider with an OpenAI-compatible Chat Completions endpoint can be connected through **Custom endpoint**. Chrome's built-in Translation API is available only in Chrome versions that support it (the current code requires Chrome 138 or later); use Google Translate or a custom endpoint in other browsers.
+> **Service scope:** This project does not ship separate built-in adapters for Microsoft, DeepL, DeepSeek, Kimi, Ollama, or other providers. A provider with an OpenAI-compatible Chat Completions or Responses endpoint can be connected through **Custom endpoint**. Chrome's built-in Translation API is available only in Chrome versions that support it (the current code requires Chrome 138 or later); use Google Translate or a custom endpoint in other browsers.
 
 <p align="center"><em>Original and translation, curled up together ✨</em></p>
 <kbd><img src="../misc/sample-git-1.gif" alt="sample-git-1.gif" style="width: 80%; max-width: 100%;border: 1px solid black;"></kbd>
@@ -49,7 +50,7 @@ Whether you are reading papers, technical docs, or simply wandering the web, it 
 |---------|-------------------|
 | Chrome | [Chrome Web Store](https://chromewebstore.google.com/detail/%E6%B5%81%E7%95%85%E9%98%85%E8%AF%BB/djnlaiohfaaifbibleebjggkghlmcpcj?hl=zh-CN&authuser=0) \| [Domestic Mirror](https://www.crxsoso.com/webstore/detail/djnlaiohfaaifbibleebjggkghlmcpcj) |
 | Edge | [Edge Add-ons Store](https://microsoftedge.microsoft.com/addons/detail/%E6%B5%81%E7%95%85%E9%98%85%E8%AF%BB/kakgmllfpjldjhcnkghpplmlbnmcoflp?hl=zh-CN) |
-| Firefox | [Firefox Add-ons Store](https://addons.mozilla.org/zh-CN/firefox/addon/%E6%B5%81%E7%95%85%E9%98%85%E8%AF%BB/) |
+| Firefox | AMO listing in preparation; run `bun run zip:firefox` to build from source |
 
 ## 🛠️ Developer's workshop
 
@@ -73,6 +74,10 @@ bun run build:debug
 
 # Firefox build
 bun run build:firefox
+
+# Firefox store package, reviewer source package, and Mozilla validation
+bun run zip:firefox
+bun run lint:firefox
 
 # Pack zip
 bun run zip

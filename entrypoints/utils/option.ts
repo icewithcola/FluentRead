@@ -6,6 +6,16 @@ export const services = {
   chromeTranslator: 'chromeTranslator', // Chrome 内置翻译 API
 };
 
+export function defaultServiceForBrowser(): string {
+  return import.meta.env.FIREFOX ? services.google : services.chromeTranslator;
+}
+
+export function supportedServiceForBrowser(service: string): string {
+  return import.meta.env.FIREFOX && service === services.chromeTranslator
+    ? services.google
+    : service;
+}
+
 export const servicesType = {
   // 阵营划分
   machine: new Set([services.chromeTranslator]),
@@ -24,21 +34,32 @@ export const servicesType = {
 };
 
 export const customModelString = '自定义模型';
-export const models = new Map<string, Array<string>>([
-  [
-    services.custom,
-    [
-      'gpt-5-nano',
-      'gpt-5-mini',
-      'gpt5',
-      'gpt-4o',
-      'gemma:7b',
-      'llama2:7b',
-      'mistral:7b',
-      customModelString,
-    ],
-  ],
-]);
+
+/**
+ * Migrate legacy `customModel[service]` entries into `model[service]` so
+ * users who previously chose "自定义模型" keep their typed model name.
+ */
+export function migrateCustomModels(cfg: {
+  model?: Record<string, string>;
+  customModel?: Record<string, string>;
+}): boolean {
+  if (!cfg.model || typeof cfg.model !== 'object') cfg.model = {};
+  if (!cfg.customModel || typeof cfg.customModel !== 'object') return false;
+  let changed = false;
+  for (const service of new Set([...Object.keys(cfg.model), ...Object.keys(cfg.customModel)])) {
+    const current = cfg.model[service];
+    const legacy = cfg.customModel[service];
+    if (current === customModelString || (!current && legacy)) {
+      cfg.model[service] = legacy || '';
+      if (legacy !== undefined) delete cfg.customModel[service];
+      changed = true;
+    } else if (legacy !== undefined) {
+      delete cfg.customModel[service];
+      changed = true;
+    }
+  }
+  return changed;
+}
 
 export const options = {
   on: [
@@ -65,41 +86,41 @@ export const options = {
     { value: 'ru', label: '俄语' },
   ],
   keys: [
-    { value: 'none', label: '禁用快捷键' },
+    { value: 'none', label: '关闭' },
 
-    { value: 'Computer', label: '键盘选项', disabled: true },
-    { value: 'Control', label: 'Ctrl' },
-    { value: 'Alt', label: 'Alt' },
-    { value: 'Shift', label: 'Shift' },
-    { value: 'Escape', label: 'ESC' },
-    { value: '`', label: '波浪号键' },
+    { value: 'Computer', label: '按住按键 + 鼠标悬停', disabled: true },
+    { value: 'Control', label: 'Ctrl 键' },
+    { value: 'Alt', label: 'Alt / Option 键' },
+    { value: 'Shift', label: 'Shift 键' },
+    { value: 'Escape', label: 'Esc 键' },
+    { value: '`', label: '~ 波浪号键' },
 
-    { value: 'mouse', label: '鼠标选项', disabled: true },
-    { value: 'DoubleClick', label: '鼠标双击' },
-    { value: 'LongPress', label: '鼠标长按' },
-    { value: 'MiddleClick', label: '鼠标滚轮单击' },
+    { value: 'mouse', label: '鼠标点击段落', disabled: true },
+    { value: 'DoubleClick', label: '鼠标双击段落' },
+    { value: 'LongPress', label: '鼠标长按段落' },
+    { value: 'MiddleClick', label: '鼠标中键（按滚轮）' },
 
-    { value: 'touchscreen', label: '触屏设备选项', disabled: true },
-    { value: 'TwoFinger', label: '双指翻译' },
-    { value: 'ThreeFinger', label: '三指翻译' },
-    { value: 'FourFinger', label: '四指翻译' },
-    { value: 'DoubleClickScree', label: '双击翻译' },
-    { value: 'TripleClickScree', label: '三击翻译' },
+    { value: 'touchscreen', label: '触屏手势', disabled: true },
+    { value: 'TwoFinger', label: '双指轻触' },
+    { value: 'ThreeFinger', label: '三指轻触' },
+    { value: 'FourFinger', label: '四指轻触' },
+    { value: 'DoubleClickScree', label: '双击屏幕' },
+    { value: 'TripleClickScree', label: '三击屏幕' },
 
-    { value: 'custom', label: '自定义快捷键（测试版）' },
+    { value: 'custom', label: '自定义按键…' },
   ],
   services: [
     // 传统机器翻译
-    { value: 'machine', label: '机器翻译', disabled: true },
-    { value: services.google, label: '谷歌翻译' },
+    { value: 'machine', label: '开箱即用', disabled: true },
+    { value: services.chromeTranslator, label: 'Chrome 内置翻译' },
+    { value: services.google, label: 'Google 翻译' },
     // 大模型翻译
-    { value: 'ai', label: 'AI翻译', disabled: true },
-    { value: services.chromeTranslator, label: 'Chrome内置AI翻译⭐' },
-    { value: services.custom, label: '自定义接口⭐️' },
+    { value: 'ai', label: 'AI 大模型', disabled: true },
+    { value: services.custom, label: '自定义 AI 接口' },
   ],
   display: [
-    { value: 0, label: '仅译文模式' },
-    { value: 1, label: '双语对照模式' },
+    { value: 0, label: '仅显示译文' },
+    { value: 1, label: '双语对照' },
   ],
   // 双语翻译样式
   styles: [
@@ -158,24 +179,24 @@ export const options = {
   ],
   // 悬浮球快捷键选项
   floatingBallHotkeys: [
-    { value: 'none', label: '禁用快捷键' },
-    { value: 'Alt+T', label: 'Alt+T / Option+T (默认)' },
-    { value: 'Alt+A', label: 'Alt+A / Option+A' },
-    { value: 'Alt+S', label: 'Alt+S / Option+S' },
-    { value: 'Alt+D', label: 'Alt+D / Option+D' },
-    { value: 'Alt+Q', label: 'Alt+Q / Option+Q' },
-    { value: 'Ctrl+Shift+T', label: 'Ctrl+Shift+T / Control+Shift+T' },
-    { value: 'Ctrl+Shift+A', label: 'Ctrl+Shift+A / Control+Shift+A' },
+    { value: 'none', label: '关闭' },
+    { value: 'Alt+T', label: 'Alt + T（默认）' },
+    { value: 'Alt+A', label: 'Alt + A' },
+    { value: 'Alt+S', label: 'Alt + S' },
+    { value: 'Alt+D', label: 'Alt + D' },
+    { value: 'Alt+Q', label: 'Alt + Q' },
+    { value: 'Ctrl+Shift+T', label: 'Ctrl + Shift + T' },
+    { value: 'Ctrl+Shift+A', label: 'Ctrl + Shift + A' },
     { value: 'F9', label: 'F9' },
     { value: 'F10', label: 'F10' },
     { value: 'F11', label: 'F11' },
     { value: 'F12', label: 'F12' },
-    { value: 'custom', label: '自定义快捷键（测试版）' },
+    { value: 'custom', label: '自定义快捷键…' },
   ],
   theme: [
-    { value: 'auto', label: '跟随操作系统' },
-    { value: 'light', label: '亮色主题' },
-    { value: 'dark', label: '暗色主题' },
+    { value: 'auto', label: '跟随系统' },
+    { value: 'light', label: '浅色模式' },
+    { value: 'dark', label: '深色模式' },
   ],
 };
 
@@ -186,7 +207,7 @@ export const defaultOption = {
   style: 1,
   display: 1,
   hotkey: 'Control',
-  service: services.chromeTranslator,
+  service: defaultServiceForBrowser(),
   custom: 'http://localhost:11434/v1/chat/completions',
   system_role: 'You are a professional, authentic machine translation engine.',
   user_role: `Translate the following text into {{to}}, If translation is unnecessary (e.g. proper nouns, codes, etc.), return the original text. NO explanations. NO notes:

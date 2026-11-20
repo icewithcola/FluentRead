@@ -4,11 +4,11 @@
       <div class="left-section">
         <span class="count-label">已翻译</span>
         <span class="count-number">{{ computedCount }}</span>
-        <span class="count-label">次</span>
+        <span class="count-label">段</span>
       </div>
 
       <div class="right-section">
-        <el-tooltip content="清除翻译缓存" placement="top">
+        <el-tooltip content="清空翻译缓存" placement="top">
           <el-button
             link
             :type="clearStatusType"
@@ -25,7 +25,7 @@
           </el-button>
         </el-tooltip>
 
-        <el-tooltip content="GitHub 开源" placement="top">
+        <el-tooltip content="使用指南与官网" placement="top">
           <el-link
             href="https://fluent.thinkstu.com/"
             target="_blank"
@@ -78,6 +78,7 @@ import { Config } from '../entrypoints/utils/model';
 import { TRANSLATION_COUNT_KEY, normalizeTranslationCount } from '../entrypoints/utils/constant';
 import { TRANSLATION_CACHE_MESSAGE_TYPE } from '../entrypoints/utils/translationLruCache';
 import { storage } from '@wxt-dev/storage';
+import { ElMessage } from 'element-plus';
 import browser from 'webextension-polyfill';
 
 const isClearing = ref(false);
@@ -109,9 +110,11 @@ async function clearCache() {
     }
 
     clearResult.value = 'success';
+    ElMessage({ message: '已清空翻译缓存', type: 'success', duration: 2000 });
   } catch (error) {
     console.error('清除缓存失败:', error);
     clearResult.value = 'error';
+    ElMessage({ message: '清空缓存失败，请重试', type: 'error', duration: 2000 });
   } finally {
     setTimeout(() => {
       isClearing.value = false;

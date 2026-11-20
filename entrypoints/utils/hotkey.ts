@@ -161,7 +161,7 @@ export function parseHotkey(hotkeyString: string): ParsedHotkey {
           key: part,
           isValid: false,
           displayName: '',
-          errorMessage: `不支持的按键: ${part}`,
+          errorMessage: `暂不支持按键：${part}`,
         };
       }
     } else {
@@ -183,7 +183,7 @@ export function parseHotkey(hotkeyString: string): ParsedHotkey {
           key,
           isValid: false,
           displayName: '',
-          errorMessage: `不支持的修饰键: ${part}`,
+          errorMessage: `暂不支持按键：${part}`,
         };
       }
     }
@@ -196,7 +196,7 @@ export function parseHotkey(hotkeyString: string): ParsedHotkey {
       key,
       isValid: false,
       displayName: '',
-      errorMessage: '单个字母键需要与修饰键组合使用',
+      errorMessage: '单字母键容易误触，请搭配 Ctrl、Alt 或 Shift 使用',
     };
   }
 
@@ -207,7 +207,7 @@ export function parseHotkey(hotkeyString: string): ParsedHotkey {
       key,
       isValid: false,
       displayName: '',
-      errorMessage: 'CMD 键已被禁用，请使用其他修饰键组合',
+      errorMessage: '暂不支持 Command 键，请改用 Ctrl、Alt 或 Shift',
     };
   }
 
@@ -377,7 +377,7 @@ export function validateHotkeyConflicts(parsedHotkey: ParsedHotkey): {
     ) {
       return {
         hasConflict: true,
-        conflictDescription: `与系统快捷键冲突: ${conflict.desc}`,
+        conflictDescription: `可能与系统快捷键冲突：${conflict.desc}`,
       };
     }
   }

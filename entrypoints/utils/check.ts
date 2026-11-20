@@ -9,13 +9,13 @@ export function checkConfig(): boolean {
 
   // 2. Check if the token is provided for services that require it
   if (servicesType.isUseToken(config.service) && !config.token[config.service]) {
-    sendErrorMessage('令牌尚未配置，请前往设置页配置');
+    sendErrorMessage('请先在插件设置中填写 API Key');
     return false;
   }
 
   // Some translation services require "bilingual mode" to be enabled
   if (config.display === 0 && config.service === services.google) {
-    sendErrorMessage('「谷歌翻译」仅支持双语模式，请切换翻译服务');
+    sendErrorMessage('Google 翻译仅支持“双语对照”模式，请在设置中切换显示方式或翻译引擎');
     return false;
   }
 

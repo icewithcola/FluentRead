@@ -4,12 +4,32 @@ import { services } from '@/entrypoints/utils/option';
 import { config } from '@/entrypoints/utils/config';
 import { contentPostHandler } from '@/entrypoints/utils/check';
 import { cloudflareFailureMessage } from '@/entrypoints/utils/cloudflareError';
+import { assertSecureFirefoxEndpoint, firefoxRedirectMode } from '@/entrypoints/utils/network';
+import {
+  openAiEndpointCandidates,
+  openAiRequestBody,
+  openAiResponseText,
+  type OpenAiEndpointSettings,
+  type OpenAiRequest,
+} from '@/entrypoints/utils/openai';
+
+function requestCustomEndpoint(
+  url: string,
+  token: string,
+  request: OpenAiRequest,
+  signal?: AbortSignal,
+): Promise<Response> {
+  assertSecureFirefoxEndpoint(url);
+  return fetch(url, {
+    method: method.POST,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: openAiRequestBody(url, request),
+    signal,
+    redirect: firefoxRedirectMode(),
+  });
+}
 
 async function custom(message: any, signal?: AbortSignal) {
-  let headers = new Headers();
-  headers.append('Content-Type', 'application/json');
-  headers.append('Authorization', `Bearer ${config.token[services.custom]}`);
-
   // Read page summary from message (passed from content script where it was generated)
   const pageSummary = config.enablePageSummary ? message.pageSummary || undefined : undefined;
 
@@ -25,12 +45,13 @@ async function custom(message: any, signal?: AbortSignal) {
     }
   }
 
-  const resp = await fetch(config.custom, {
-    method: method.POST,
-    headers: headers,
-    body: commonMsgTemplate(message.origin, pageSummary),
+  const request = commonMsgTemplate(message.origin, pageSummary);
+  const resp = await requestCustomEndpoint(
+    config.custom,
+    config.token[services.custom],
+    request,
     signal,
-  });
+  );
 
   if (!resp.ok) {
     const body = await resp.text();
@@ -38,33 +59,87 @@ async function custom(message: any, signal?: AbortSignal) {
     throw failedResponseError(resp, body);
   }
 
-  // Streaming mode: parse SSE chunks and send via port
-  if (config.useStream && message._port) {
-    return await parseStreamResponse(resp, message._port, signal);
+  return readCustomResponse(resp, request.stream ? message._port : undefined, signal);
+}
+
+export async function testCustomEndpoint({ url, token, model, stream }: OpenAiEndpointSettings) {
+  const candidates = openAiEndpointCandidates(url);
+  assertSecureFirefoxEndpoint(url);
+  if (!model || !token) throw new Error('请先填写 API Key 和模型');
+
+  const request: OpenAiRequest = {
+    model,
+    messages: [{ role: 'user', content: 'Reply with only the word OK.' }],
+    temperature: 0.7,
+    stream: stream || undefined,
+  };
+  const signal = AbortSignal.timeout(20_000);
+  let httpError: string | undefined;
+  let requestError: string | undefined;
+
+  for (const candidate of candidates) {
+    try {
+      const resp = await requestCustomEndpoint(candidate, token, request, signal);
+      if (!resp.ok) {
+        const body = await resp.text();
+        const detail = extractResponseErrorMessage(body);
+        const failure = cloudflareFailureMessage(body, resp.headers, resp.status) ??
+          (detail ? `HTTP ${resp.status}：${detail}` : `HTTP ${resp.status} ${resp.statusText}`.trim());
+        if (![404, 405, 501].includes(resp.status)) httpError ??= failure;
+        requestError ??= failure;
+        continue;
+      }
+      if (await readCustomResponse(resp, undefined, signal)) return candidate;
+      requestError ??= '接口未返回翻译内容，请检查模型是否可用';
+    } catch (error) {
+      if (signal.aborted) throw new Error('连接超时，请检查网络或 API 地址');
+      requestError ??= error instanceof SyntaxError
+        ? '接口返回格式无法识别，请检查 API 地址是否正确'
+        : error instanceof Error ? error.message : String(error);
+    }
   }
 
-  // Non-streaming mode: parse JSON response
-  // However, the API may still return SSE stream data if config.useStream is true
-  // (e.g. when called via browser.runtime.sendMessage without a port).
-  // Detect and handle SSE responses gracefully.
+  throw new Error(httpError ?? requestError ?? '接口未返回翻译内容，请检查模型是否可用');
+}
+
+async function readCustomResponse(resp: Response, port?: any, signal?: AbortSignal): Promise<string> {
   const contentType = resp.headers.get('content-type') || '';
+  if (port && !contentType.includes('application/json')) {
+    return parseStreamResponse(resp, port, signal);
+  }
+
   const responseText = await resp.text();
   throwIfCloudflareErrorPage(responseText, resp);
 
-  // Check if the response is SSE (text/event-stream) or starts with "data: "
-  if (contentType.includes('text/event-stream') || responseText.trimStart().startsWith('data: ')) {
+  if (contentType.includes('text/event-stream') || /^(data:|event:|:)/.test(responseText.trimStart())) {
     return parseSSEText(responseText);
   }
 
-  // Normal JSON response
-  let result = JSON.parse(responseText);
-  return contentPostHandler(result.choices[0].message.content);
+  const result = openAiResponseText(JSON.parse(responseText));
+  if (!result) throw new Error('接口未返回翻译内容，请检查模型是否可用');
+  return contentPostHandler(result);
+}
+
+function extractResponseErrorMessage(body: string): string {
+  const trimmed = body.trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = JSON.parse(trimmed);
+    const msg = parsed?.error?.message || parsed?.message || parsed?.error_msg || parsed?.detail;
+    if (typeof msg === 'string' && msg.trim()) return msg.trim();
+  } catch {
+    // Non-JSON response body; fall back to plain text below.
+  }
+  if (/^\s*</.test(trimmed)) return '';
+  return trimmed.length > 140 ? `${trimmed.slice(0, 140)}…` : trimmed;
 }
 
 function failedResponseError(resp: Response, body: string): Error {
+  const cfMessage = cloudflareFailureMessage(body, resp.headers, resp.status);
+  if (cfMessage) return new Error(cfMessage);
+  const detail = extractResponseErrorMessage(body) || resp.statusText;
   return new Error(
-    cloudflareFailureMessage(body, resp.headers, resp.status) ??
-      `翻译失败: ${resp.status} ${resp.statusText} body: ${body}`,
+    detail ? `翻译失败（HTTP ${resp.status}）：${detail}` : `翻译失败（HTTP ${resp.status}）`,
   );
 }
 
@@ -79,30 +154,37 @@ function throwIfCloudflareErrorPage(body: string, resp: Response): void {
  */
 function parseSSEText(text: string): string {
   let result = '';
-  const lines = text.split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith(':')) continue;
-    if (trimmed === 'data: [DONE]') continue;
-
-    if (trimmed.startsWith('data: ')) {
-      const jsonStr = trimmed.slice(6);
-      try {
-        const chunk = JSON.parse(jsonStr);
-        const delta = chunk.choices?.[0]?.delta?.content;
-        if (delta) {
-          result += delta;
-        }
-      } catch (e) {
-        console.warn('SSE chunk parse error:', e, jsonStr);
-      }
-    }
+  for (const line of text.split('\n')) {
+    result += openAiStreamDelta(line);
   }
 
   if (!result) {
-    throw new Error('翻译失败: SSE 响应未返回有效内容');
+    throw new Error('未收到翻译内容，可尝试在设置中关闭“边译边显”后重试');
   }
   return contentPostHandler(result);
+}
+
+function openAiStreamDelta(line: string): string {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('data:')) return '';
+  const data = trimmed.slice(5).trim();
+  if (!data || data === '[DONE]') return '';
+
+  let event;
+  try {
+    event = JSON.parse(data);
+  } catch (error) {
+    console.warn('SSE chunk parse error:', error);
+    return '';
+  }
+
+  if (event?.type === 'error' || event?.type === 'response.failed') {
+    throw new Error(event.message || event.response?.error?.message || '接口返回错误，请稍后重试');
+  }
+  const delta = event?.type === 'response.output_text.delta'
+    ? event.delta
+    : event?.choices?.[0]?.delta?.content;
+  return typeof delta === 'string' ? delta : '';
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -126,12 +208,12 @@ async function parseStreamResponse(resp: Response, port: any, signal?: AbortSign
   ) {
     const body = await resp.text();
     throwIfCloudflareErrorPage(body, resp);
-    throw new Error('翻译失败: 流式响应未返回有效内容');
+    throw new Error('未收到翻译内容，可尝试在设置中关闭“边译边显”后重试');
   }
 
   const reader = resp.body?.getReader();
   if (!reader) {
-    throw new Error('翻译失败: 无法获取响应流');
+    throw new Error('无法读取接口响应流，可尝试在设置中关闭“边译边显”后重试');
   }
 
   const onAbort = () => {
@@ -157,65 +239,42 @@ async function parseStreamResponse(resp: Response, port: any, signal?: AbortSign
       throwIfAborted(signal);
       const { done, value } = await reader.read();
       throwIfAborted(signal);
-      if (done) break;
 
-      const chunk = decoder.decode(value, { stream: true });
+      const chunk = done ? decoder.decode() : decoder.decode(value, { stream: true });
       appendRaw(chunk);
       buffer += chunk;
 
       // Process complete SSE lines
       const lines = buffer.split('\n');
       // Keep the last potentially incomplete line in the buffer
-      buffer = lines.pop() || '';
+      if (!done) buffer = lines.pop() || '';
 
       for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith(':')) continue;
-        if (trimmed === 'data: [DONE]') continue;
-
-        if (trimmed.startsWith('data: ')) {
-          const jsonStr = trimmed.slice(6);
-          try {
-            const chunkJson = JSON.parse(jsonStr);
-            const delta = chunkJson.choices?.[0]?.delta?.content;
-            if (delta) {
-              result += delta;
-              // Send each chunk to content script in real-time
-              try {
-                port.postMessage({ type: 'stream-chunk', chunk: delta, accumulated: result });
-              } catch (e) {
-                // Port may have been disconnected
-                console.warn('Port disconnected, stopping stream');
-                await reader.cancel().catch(() => undefined);
-                throwIfAborted(signal);
-                return contentPostHandler(result);
-              }
-            }
-          } catch (e) {
-            if (
-              signal?.aborted ||
-              (e instanceof Error &&
-                (e.name === 'AbortError' || e.name === 'TranslationCancelledError'))
-            ) {
-              throw e;
-            }
-            console.warn('Stream chunk parse error:', e, jsonStr);
-          }
+        const delta = openAiStreamDelta(line);
+        if (!delta) continue;
+        result += delta;
+        try {
+          port.postMessage({ type: 'stream-chunk', chunk: delta, accumulated: result });
+        } catch {
+          throwIfAborted(signal);
+          return contentPostHandler(result);
         }
       }
+      if (done) break;
     }
 
-    appendRaw(decoder.decode());
     throwIfAborted(signal);
 
     if (!result) {
       throwIfCloudflareErrorPage(rawPrefix, resp);
-      throw new Error('翻译失败: 流式响应未返回有效内容');
+      throw new Error('未收到翻译内容，可尝试在设置中关闭“边译边显”后重试');
     }
 
     return contentPostHandler(result);
   } finally {
     signal?.removeEventListener('abort', onAbort);
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 }
 

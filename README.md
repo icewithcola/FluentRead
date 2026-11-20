@@ -14,6 +14,7 @@
 <p align="center">
   <a href="https://fluent.thinkstu.com/">阅读文档</a> ·
   <a href="https://fluent.thinkstu.com/guide/getting-started">安装扩展</a> ·
+  <a href="./PRIVACY.md">隐私政策</a> ·
   <a href="https://github.com/icewithcola/FluentRead">GitHub</a>
 </p>
 
@@ -27,7 +28,7 @@
 
 ## ✨ 现在能做什么
 
-- **三种翻译方式**：内置 Google 翻译（双语模式）、Chrome 内置 Translation API，以及可配置的 OpenAI 兼容 Chat Completions 接口。自定义接口可设置 URL、API Key、模型和提示词，并支持 SSE 流式输出。
+- **三种翻译方式**：内置 Google 翻译（双语模式）、Chrome 内置 Translation API，以及支持 SSE 流式输出的 OpenAI 兼容 Chat Completions 和 Responses 接口。填写基础 URL、API Key 和模型后，设置页会自动检测并保存可用端点，也可以点击「测试接口」手动验证。
 - **整页翻译与还原**：使用悬浮球、快捷键或右键菜单翻译整页；无需刷新即可还原原始页面内容。
 - **双语或仅译文**：可保留原文并在其后显示译文，也可替换为仅译文；双语模式提供多种译文样式。
 - **划词翻译**：选中文本后，将鼠标移到出现的指示点即可查看翻译；支持双语/仅译文显示、复制译文，以及浏览器语音朗读原文或译文。
@@ -35,7 +36,7 @@
 - **上下文增强**：使用自定义接口进行全文翻译时，可选先生成页面摘要并把它作为翻译上下文。
 - **本地配置，按需发送**：扩展设置和翻译缓存保存在浏览器本地。翻译缓存是最多 128MB 的 LRU（其中 100MB 存译文，28MB 留给元数据），条目在 1 个月未使用后失效。翻译文本会发送给你选择的翻译服务；请依据所选服务的隐私政策使用。
 
-> **服务范围说明**：本项目没有 Microsoft、DeepL、DeepSeek、Kimi、Ollama 等独立内置适配器。若服务提供 OpenAI 兼容的 Chat Completions 接口，可通过“自定义接口”接入。Chrome 内置 Translation API 仅适用于支持该 API 的 Chrome（代码当前要求 Chrome 138 或更高版本）；在其他浏览器中请使用 Google 翻译或自定义接口。
+> **服务范围说明**：本项目没有 Microsoft、DeepL、DeepSeek、Kimi、Ollama 等独立内置适配器。若服务提供 OpenAI 兼容的 Chat Completions 或 Responses 接口，可通过“自定义接口”接入。Chrome 内置 Translation API 仅适用于支持该 API 的 Chrome（代码当前要求 Chrome 138 或更高版本）；在其他浏览器中请使用 Google 翻译或自定义接口。
 
 ## 🧭 翻译核心
 
@@ -61,7 +62,7 @@
 |-------|---------|
 | Chrome | [Chrome 应用商店](https://chromewebstore.google.com/detail/%E6%B5%81%E7%95%85%E9%98%85%E8%AF%BB/djnlaiohfaaifbibleebjggkghlmcpcj?hl=zh-CN&authuser=0) \| [国内镜像](https://www.crxsoso.com/webstore/detail/djnlaiohfaaifbibleebjggkghlmcpcj) |
 | Edge | [Edge 应用商店](https://microsoftedge.microsoft.com/addons/detail/%E6%B5%81%E7%95%85%E9%98%85%E8%AF%BB/kakgmllfpjldjhcnkghpplmlbnmcoflp?hl=zh-CN) |
-| Firefox | [Firefox 附加组件商店](https://addons.mozilla.org/zh-CN/firefox/addon/%E6%B5%81%E7%95%85%E9%98%85%E8%AF%BB/) |
+| Firefox | AMO 上架准备中；发布前可从源码运行 `bun run zip:firefox` 构建 |
 
 ## 🛠️ 开发者的小工坊
 
@@ -85,6 +86,10 @@ bun run build:debug
 
 # Firefox 构建
 bun run build:firefox
+
+# Firefox 商店包、审核源码包与 Mozilla 静态检查
+bun run zip:firefox
+bun run lint:firefox
 
 # 打包 zip
 bun run zip

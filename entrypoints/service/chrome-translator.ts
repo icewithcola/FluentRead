@@ -19,7 +19,7 @@ async function translateWithOffscreen(message: any): Promise<any> {
     // 向 offscreen 文档发送翻译请求
     const response = await new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
-        reject(new Error('Offscreen 翻译请求超时（30秒）'));
+        reject(new Error('Chrome 内置翻译响应超时，请稍后重试'));
       }, 30000);
 
       chrome.runtime.sendMessage(
@@ -52,12 +52,10 @@ async function translateWithOffscreen(message: any): Promise<any> {
       }
     }
 
-    throw new Error('无效的响应格式');
+    throw new Error('Chrome 内置翻译返回异常，请重试');
   } catch (error) {
     console.error('Offscreen 翻译失败:', error);
-    throw new Error(
-      `Chrome Translation API 不可用：${error instanceof Error ? error.message : '未知错误'}`,
-    );
+    throw new Error(error instanceof Error ? error.message : 'Chrome 内置翻译暂时不可用');
   }
 }
 
@@ -71,7 +69,7 @@ async function ensureOffscreenDocument() {
 
   // Check if offscreen API is available
   if (!chrome.offscreen) {
-    throw new Error('当前浏览器不支持 Offscreen API，请确保使用 Chrome 109+ 版本');
+    throw new Error('当前浏览器暂不支持 Chrome 内置翻译，请升级 Chrome 或在设置中切换其他翻译服务');
   }
 
   try {
@@ -105,9 +103,7 @@ async function ensureOffscreenDocument() {
       return;
     }
     console.error('创建 offscreen 文档失败:', error);
-    throw new Error(
-      `无法创建 offscreen 文档: ${error instanceof Error ? error.message : '未知错误'}`,
-    );
+    throw new Error('Chrome 内置翻译初始化失败，请稍后重试或切换其他翻译服务');
   } finally {
     creatingOffscreen = null;
   }
@@ -127,5 +123,5 @@ export default async function chromeTranslator(message: any): Promise<any> {
   }
 
   // 如果在其他环境中，抛出错误
-  throw new Error('Chrome Translation API 只能在 Google Chrome 浏览器 v138 stable 版本以上使用');
+  throw new Error('当前浏览器暂不支持 Chrome 内置翻译，请升级 Chrome 或在设置中切换其他翻译服务');
 }

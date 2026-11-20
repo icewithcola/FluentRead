@@ -149,7 +149,7 @@ async function handleTranslationRequest(data: any): Promise<string> {
   // 检查是否支持 Chrome Translation API
   if (!isChromeTranslationSupported()) {
     throw new Error(
-      '当前浏览器不支持 Chrome Translation API，请确保使用 Google Chrome 浏览器 v138 stable 或更高版本。',
+      '当前浏览器暂不支持 Chrome 内置翻译，请升级 Chrome 或在设置中切换其他翻译服务',
     );
   }
 
@@ -198,13 +198,13 @@ async function handleTranslationRequest(data: any): Promise<string> {
     // 提供更友好的错误信息
     if (error instanceof Error) {
       if (error.message.includes('not available') || error.message.includes('not ready')) {
-        throw new Error('Chrome Translation API 暂时不可用。可能需要下载语言模型，请稍后重试。');
+        throw new Error('Chrome 正在准备本地翻译模型，请稍后重试');
       } else if (error.message.includes('language') || error.message.includes('not supported')) {
         throw new Error(
-          `不支持的语言组合：${fromLang} -> ${toLang}。请尝试其他语言对或检查浏览器版本。`,
+          `Chrome 内置翻译暂不支持该语种转换（${fromLang} -> ${toLang}），可在设置中切换为 Google 翻译或自定义 AI 接口`,
         );
       } else if (error.message.includes('model')) {
-        throw new Error('翻译模型未就绪，请稍后重试或检查网络连接。');
+        throw new Error('Chrome 本地翻译模型尚未就绪，请稍后重试');
       }
     }
 

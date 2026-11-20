@@ -1,8 +1,11 @@
 import { _service } from '@/entrypoints/service/_service';
+import { testCustomEndpoint } from '@/entrypoints/service/custom';
 import { config } from '@/entrypoints/utils/config';
 import { CONTEXT_MENU_IDS } from '@/entrypoints/utils/constant';
 import { services } from '@/entrypoints/utils/option';
 import { method } from '@/entrypoints/utils/constant';
+import { assertSecureFirefoxEndpoint, firefoxRedirectMode } from '@/entrypoints/utils/network';
+import { openAiEndpointType, openAiRequestBody, openAiResponseText } from '@/entrypoints/utils/openai';
 import {
   TRANSLATION_CACHE_MESSAGE_TYPE,
   handleTranslationCacheMessage,
@@ -40,7 +43,7 @@ async function setupContextMenus(): Promise<void> {
     });
     await browser.contextMenus.create({
       id: CONTEXT_MENU_IDS.RESTORE_ORIGINAL,
-      title: '撤销翻译',
+      title: '恢复原文',
       parentId: CONTEXT_MENU_IDS.PARENT,
       contexts: ['page', 'selection'],
       enabled: false,
@@ -108,11 +111,11 @@ export default defineBackground({
         await contextMenusReady;
         await browser.contextMenus.update(CONTEXT_MENU_IDS.TRANSLATE_FULL_PAGE, {
           enabled: !isTranslated,
-          title: isTranslated ? '全文翻译 (已翻译)' : '全文翻译',
+          title: isTranslated ? '全文翻译（已翻译）' : '全文翻译',
         });
         await browser.contextMenus.update(CONTEXT_MENU_IDS.RESTORE_ORIGINAL, {
           enabled: isTranslated,
-          title: isTranslated ? '撤销翻译' : '撤销翻译 (无翻译)',
+          title: '恢复原文',
         });
       } catch (error) {
         console.error('Failed to update context menus:', error);
@@ -139,12 +142,19 @@ export default defineBackground({
     });
 
     // 处理翻译请求
-    browser.runtime.onMessage.addListener((message: any) => {
+    browser.runtime.onMessage.addListener((message: any, sender) => {
       // Skip messages intended for other listeners (e.g. offscreen document)
       if (message?.type === 'CHROME_TRANSLATE_OFFSCREEN') return;
       if (message?.type === 'stream-translate') return;
       if (message?.type === TRANSLATION_CACHE_MESSAGE_TYPE) {
         return handleTranslationCacheMessage(message as TranslationCacheRequest);
+      }
+      if (message?.type === 'test-custom-endpoint') {
+        if (!sender.url?.startsWith(browser.runtime.getURL('/'))) return;
+        return testCustomEndpoint(message.settings).then(
+          (url) => ({ url }),
+          (error: Error) => ({ error: error.message }),
+        );
       }
 
       // Handle non-streaming summary requests
@@ -255,6 +265,7 @@ async function handleSummaryRequest(
     // Use custom summary API key/url if provided, otherwise fall back to translation settings
     const apiKey = summaryApiKey || config.token[config.service] || config.token[services.custom];
     const apiUrl = summaryApiUrl || config.custom;
+    assertSecureFirefoxEndpoint(apiUrl);
 
     bgDebugLog('Summary API URL:', apiUrl);
     bgDebugLog('Summary API Key:', apiKey ? `${apiKey.slice(0, 6)}...` : '(empty)');
@@ -267,7 +278,10 @@ async function handleSummaryRequest(
     const resp = await fetch(apiUrl, {
       method: method.POST,
       headers,
-      body,
+      body: openAiEndpointType(apiUrl) === 'responses'
+        ? openAiRequestBody(apiUrl, JSON.parse(body))
+        : body,
+      redirect: firefoxRedirectMode(),
     });
 
     bgDebugLog('Summary API response status:', resp.status, resp.statusText);
@@ -292,7 +306,7 @@ async function handleSummaryRequest(
 
     const result = await resp.json();
     bgDebugLog('Summary API raw JSON response:', JSON.stringify(result));
-    const text = result.choices?.[0]?.message?.content || '';
+    const text = openAiResponseText(result);
     bgDebugLog('Summary extracted text:', text);
     return { text };
   } catch (error: any) {

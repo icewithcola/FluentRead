@@ -13,7 +13,7 @@
     >
       <div class="hotkey-input-container">
         <div class="input-section">
-          <el-text class="input-label"> 请按下您想要设置的快捷键组合： </el-text>
+          <el-text class="input-label"> 请直接按下键盘上的组合键： </el-text>
           <div
             class="hotkey-input-field"
             :class="{
@@ -28,11 +28,11 @@
             ref="inputField"
           >
             <div v-if="!isRecording && !currentHotkey" class="placeholder">
-              点击这里开始录制快捷键...
+              点击此处，然后按下组合键…
             </div>
             <div v-else-if="isRecording" class="recording-text">
               <el-icon class="recording-icon"><Loading /></el-icon>
-              正在录制，请按下快捷键...
+              正在识别按键，请直接按键盘…
             </div>
             <div v-else-if="currentHotkey" class="hotkey-display">
               {{ parsedHotkey?.displayName || currentHotkey }}
@@ -57,13 +57,13 @@
             class="success-message"
           >
             <el-icon><CircleCheckFilled /></el-icon>
-            快捷键有效，可以使用
+            快捷键可用
           </div>
         </div>
 
         <!-- 预设快捷键推荐 -->
         <div class="preset-section">
-          <el-text class="section-title">或选择推荐的快捷键：</el-text>
+          <el-text class="section-title">常用快捷键：</el-text>
           <div class="preset-buttons">
             <el-button
               v-for="preset in recommendedHotkeys"
@@ -81,8 +81,7 @@
         <!-- 简化说明 -->
         <div class="help-section">
           <el-text size="small" type="info">
-            提示：建议使用修饰键组合（如 Ctrl+字母），避免与系统快捷键冲突。注意：不能使用 CMD
-            充当快捷键
+            提示：建议用 Ctrl、Alt(Option) 或 Shift 搭配字母键。为避免与系统冲突，暂不支持 Command 键。
           </el-text>
         </div>
       </div>

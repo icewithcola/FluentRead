@@ -78,6 +78,13 @@ jobs:
           cd .output/chrome-mv3
           zip -r "$GITHUB_WORKSPACE/artifacts/FluentRead-$RELEASE_TAG-chrome-debug.zip" .
 
+      - name: Build Firefox extension and reviewer source ZIPs
+        run: |
+          bun run zip:firefox
+          bun run lint:firefox
+          cp .output/catgirl-read-*-firefox.zip "artifacts/FluentRead-$RELEASE_TAG-firefox.zip"
+          cp .output/catgirl-read-*-firefox-sources.zip "artifacts/FluentRead-$RELEASE_TAG-firefox-sources.zip"
+
       - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -1,10 +1,10 @@
 <template>
   <div class="header-container">
     <div class="logo-area">
-      <img src="/icon/512.png" alt="Catgirl Read translator icon" class="logo" />
+      <img src="/icon/512.png" alt="喵喵阅读图标" class="logo" />
       <div class="title-wrapper">
-        <h1 class="title">Catgirl Read</h1>
-        <span class="version">v{{ version }}</span>
+        <h1 class="title">喵喵阅读</h1>
+        <span class="version">Catgirl Read · v{{ version }}</span>
       </div>
     </div>
   </div>

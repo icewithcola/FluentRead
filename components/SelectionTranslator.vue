@@ -19,7 +19,7 @@
       @mouseleave="handleMouseLeaveTooltip"
     >
       <div class="fr-tooltip-header">
-        <span>翻译结果<small>（由喵喵阅读提供）</small></span>
+        <span>喵喵阅读</span>
         <div class="fr-tooltip-actions">
           <button class="fr-action-btn" @click="copyTranslation" title="复制译文">
             <svg
@@ -56,7 +56,7 @@
             <button
               class="fr-text-audio-btn"
               @click="(e) => toggleAudio(selectedText, e)"
-              title="播放/停止原文"
+              title="朗读/停止原文"
             >
               <svg
                 v-if="isPlaying && currentPlayingText === selectedText"
@@ -102,7 +102,7 @@
             <button
               class="fr-text-audio-btn"
               @click="(e) => toggleAudio(translationResult, e)"
-              title="播放/停止译文"
+              title="朗读/停止译文"
             >
               <svg
                 v-if="isPlaying && currentPlayingText === translationResult"
@@ -157,7 +157,7 @@
                 ></path>
               </svg>
             </div>
-            <span>正在播放: {{ currentPlayingText === selectedText ? '原文' : '译文' }}</span>
+            <span>正在朗读：{{ currentPlayingText === selectedText ? '原文' : '译文' }}</span>
             <button class="fr-stop-audio-btn" @click="(e) => stopAudio(e)">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -196,7 +196,7 @@
           <polyline points="20 6 9 17 4 12"></polyline>
         </svg>
       </div>
-      <span>复制译文成功!</span>
+      <span>已复制译文</span>
     </div>
   </teleport>
 </template>
