@@ -37,6 +37,9 @@ export function formatTargetLanguageForPrompt(langCode: string): string {
 const BATCH_SEGMENT_MARKER_TEST_RE = /\[\[@FR_SEG_\d+@\]\]/;
 const BATCH_SEGMENT_MARKER_SPLIT_RE = /(\[\[@FR_SEG_\d+@\]\])/;
 
+const GROUP_CONTEXT_PREFIX_RE =
+  /^(?:Group|List lead-in|Parent item|Table columns|Related items|Slot roles):/;
+
 /**
  * Split structural page context into cache-friendly layers ordered from
  * page-static (document meta) to section-semi-static to paragraph-dynamic.
@@ -44,14 +47,16 @@ const BATCH_SEGMENT_MARKER_SPLIT_RE = /(\[\[@FR_SEG_\d+@\]\])/;
 function splitPageContext(pageContext?: string): {
   documentMeta: string;
   sectionContext: string;
+  groupContext: string;
   precedingContext: string;
 } {
   if (!pageContext?.trim()) {
-    return { documentMeta: '', sectionContext: '', precedingContext: '' };
+    return { documentMeta: '', sectionContext: '', groupContext: '', precedingContext: '' };
   }
 
   const docLines: string[] = [];
   const sectionLines: string[] = [];
+  const groupLines: string[] = [];
   const precedingLines: string[] = [];
 
   for (const rawLine of pageContext.split(/\r?\n/)) {
@@ -59,6 +64,8 @@ function splitPageContext(pageContext?: string): {
     if (!line) continue;
     if (line.startsWith('Section:')) {
       sectionLines.push(line);
+    } else if (GROUP_CONTEXT_PREFIX_RE.test(line)) {
+      groupLines.push(line);
     } else if (line.startsWith('Preceding text:')) {
       precedingLines.push(line);
     } else {
@@ -69,6 +76,7 @@ function splitPageContext(pageContext?: string): {
   return {
     documentMeta: docLines.join('\n'),
     sectionContext: sectionLines.join('\n'),
+    groupContext: groupLines.join('\n'),
     precedingContext: precedingLines.join('\n'),
   };
 }
@@ -125,10 +133,10 @@ export function commonMsgTemplate(
     .replace(/\{\{origin\}\}/g, () => cleanedOrigin);
 
   // Layer 2: Global static formatting, terminology, and batch segmentation rules
-  system += `\n\nFormatting & terminology rules:\n- If the source contains inline HTML tags (e.g. <a>, <code>, <strong>, <em>, <span>, <kbd>, <samp>, <var>), preserve all HTML tags, nesting order, and attributes intact, and translate ONLY the natural-language text inside tags. If the source is plain text without HTML tags, output plain text only and never invent HTML tags.\n- Keep inline code wrapped in backticks (\`...\`), mathematical expressions ($...$), and content inside <code>, <kbd>, <samp>, or <var> tags in their exact original form; NEVER translate or alter code identifiers, variable names, API symbols, commands, CLI flags, or formulas.\n- If the source contains batch segment markers ([[@FR_SEG_0@]], [[@FR_SEG_1@]], ...), translate each segment independently in order and keep the exact same [[@FR_SEG_N@]] marker before each corresponding translated segment. Never merge, omit, reorder, or add segment markers.`;
+  system += `\n\nFormatting & terminology rules:\n- If the source contains inline HTML tags (e.g. <a>, <code>, <strong>, <em>, <span>, <kbd>, <samp>, <var>), preserve all HTML tags, nesting order, and attributes intact, and translate ONLY the natural-language text inside tags. If the source is plain text without HTML tags, output plain text only and never invent HTML tags. If the source wraps inline emphasis in **...**, preserve the corresponding **...** emphasis in the translation.\n- Keep inline code wrapped in backticks (\`...\`), mathematical expressions ($...$), and content inside <code>, <kbd>, <samp>, or <var> tags in their exact original form; NEVER translate or alter code identifiers, variable names, API symbols, commands, CLI flags, or formulas.\n- If the source contains batch segment markers ([[@FR_SEG_0@]], [[@FR_SEG_1@]], ...), keep the exact same [[@FR_SEG_N@]] marker before each corresponding translated segment in order, and never merge, split, omit, reorder, or add segment markers.\n- When segments belong to a structured group (list, nested outline, term-definition pairs, or table) or when structured group context is provided, use the shared logical structure to maintain consistent terminology, grammatical parallelism, tone, and implicit subjects/verbs across items while keeping each segment translation strictly 1-to-1 aligned with its source segment. Never prepend bullet symbols or numbering (-, *, •, 1., 1)) unless the source segment text itself starts with one.`;
 
   // Layer 3: Page-static document metadata (Title / Site / Meta)
-  const { documentMeta, sectionContext, precedingContext } = splitPageContext(pageContext);
+  const { documentMeta, sectionContext, groupContext, precedingContext } = splitPageContext(pageContext);
   if (documentMeta) {
     system += `\n\nDocument metadata (for domain disambiguation and terminology consistency only; NEVER translate or output this metadata):\n${documentMeta}`;
   }
@@ -143,7 +151,10 @@ export function commonMsgTemplate(
     system += `\n\nCurrent section context (for disambiguation only; NEVER translate or output this context):\n${sectionContext}`;
   }
 
-  // Layer 6: Paragraph-dynamic context & Cantonese note at the very end to preserve prefix caching
+  // Layer 6: Structured group & paragraph-dynamic context at the very end to preserve prefix caching
+  if (groupContext) {
+    system += `\n\nStructured group context (use for grammatical parallelism, terminology consistency, and disambiguation; NEVER translate or output this context):\n${groupContext}`;
+  }
   if (precedingContext) {
     system += `\n\nPreceding text context (for pronoun resolution and flow only; NEVER translate or output this context):\n${precedingContext}`;
   }

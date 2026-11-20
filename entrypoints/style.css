@@ -241,3 +241,33 @@
   border-radius: 3px;
   border: 1px solid #eee;
 }
+
+/* Compact Gestalt proximity spacing for lists, definition lists, and tables */
+li > .fluent-read-bilingual-content,
+li .fluent-read-bilingual-content,
+dd > .fluent-read-bilingual-content,
+dt > .fluent-read-bilingual-content {
+  margin: 2px 0 6px 0 !important;
+}
+
+td > .fluent-read-bilingual-content,
+th > .fluent-read-bilingual-content,
+td .fluent-read-bilingual-content,
+th .fluent-read-bilingual-content {
+  margin: 2px 0 0 0 !important;
+}
+
+/* Force row-flex list items with wrapped layout to place translation on its own line */
+.fluent-read-bilingual-content.fluent-read-bilingual-flex-break {
+  flex: 0 0 100% !important;
+  width: 100% !important;
+}
+
+/* Subtle inline code rendering inside bilingual output */
+.fluent-read-bilingual-content .fluent-read-inline-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.92em;
+  padding: 0.08em 0.32em;
+  border-radius: 3px;
+  background: rgba(127, 127, 127, 0.14);
+}

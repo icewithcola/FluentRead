@@ -114,6 +114,32 @@ const containerSet = new Set([
 const TRANSLATED_ATTR = 'data-fr-translated';
 const TRANSLATION_ID_ATTR = 'data-fr-node-id';
 const OWNED_ATTR = 'data-fr-owned';
+export const SCOPED_ATTR = 'data-fr-scoped';
+
+const COMPOUND_DIRECT_TAGS = new Set(['li', 'dd', 'blockquote']);
+const ALWAYS_STRUCTURAL_BLOCK_TAGS = new Set([
+  'ul',
+  'ol',
+  'dl',
+  'pre',
+  'table',
+  'blockquote',
+  'details',
+  'figure',
+]);
+const NESTED_BLOCK_CHILD_TAGS = new Set([
+  ...ALWAYS_STRUCTURAL_BLOCK_TAGS,
+  'p',
+  'div',
+  'section',
+  'article',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+]);
 
 const allowedTranslationTags = new Set([
   'a',
@@ -311,7 +337,7 @@ function hasMeaningfulText(text: string | null | undefined): boolean {
   return !!text && stripWhitespace(text).length > 0;
 }
 
-function isSkippedElement(element: Element): boolean {
+export function isSkippedElement(element: Element): boolean {
   const tag = element.tagName.toLowerCase();
   if (skipSet.has(tag)) return true;
   const roles = element.getAttribute('role')?.toLowerCase().split(/\s+/u) ?? [];
@@ -325,7 +351,7 @@ function isSkippedElement(element: Element): boolean {
   return false;
 }
 
-function hasSkippedAncestor(element: Element): boolean {
+export function hasSkippedAncestor(element: Element): boolean {
   let current = element.parentElement;
   while (current) {
     const tag = current.tagName.toLowerCase();
@@ -391,15 +417,126 @@ function formatInlineCodeText(text: string): string {
   return cleaned;
 }
 
+function isElementAtOrAfterBoundary(parent: Element, child: Element, boundary: Element): boolean {
+  if (boundary.parentNode !== parent) return false;
+  let passedBoundary = false;
+  for (const current of Array.from(parent.children)) {
+    if (current === boundary) passedBoundary = true;
+    if (current === child) return passedBoundary;
+  }
+  return false;
+}
+
+/**
+ * Determine whether a direct child of a compound direct block (`li`, `dd`,
+ * `blockquote`) starts a nested block subtree rather than inline prose.
+ */
+export function isNestedBlockChild(element: Element): boolean {
+  if (isOwnedElement(element) || isInlineMathElement(element) || !isVisible(element)) {
+    return false;
+  }
+  const tag = element.tagName.toLowerCase();
+  if (!NESTED_BLOCK_CHILD_TAGS.has(tag)) return false;
+  if (ALWAYS_STRUCTURAL_BLOCK_TAGS.has(tag)) return true;
+
+  if (!hasMeaningfulText(element.textContent)) return false;
+  let sibling = element.nextSibling;
+  while (sibling) {
+    if (sibling.nodeType === Node.TEXT_NODE && hasMeaningfulText(sibling.nodeValue)) {
+      return false;
+    }
+    if (
+      sibling instanceof Element &&
+      inlineSet.has(sibling.tagName.toLowerCase()) &&
+      !isOwnedElement(sibling) &&
+      isVisible(sibling) &&
+      hasMeaningfulText(sibling.textContent)
+    ) {
+      return false;
+    }
+    sibling = sibling.nextSibling;
+  }
+  return true;
+}
+
+export function findFirstNestedBlockChild(element: Element): Element | null {
+  if (!COMPOUND_DIRECT_TAGS.has(element.tagName.toLowerCase())) return null;
+  for (const child of Array.from(element.children)) {
+    if (isNestedBlockChild(child)) return child;
+  }
+  return null;
+}
+
+export function getLeadChildNodes(element: Element, boundary: Element | null): ChildNode[] {
+  const all = Array.from(element.childNodes);
+  if (!boundary || boundary.parentNode !== element) return all;
+  const lead: ChildNode[] = [];
+  for (const child of all) {
+    if (child === boundary) break;
+    lead.push(child);
+  }
+  return lead;
+}
+
+export function getScopedOwnHTML(element: Element, boundary: Element | null): string {
+  if (!boundary || boundary.parentNode !== element) return element.innerHTML;
+  if (typeof document === 'undefined') return '';
+  const wrapper = document.createElement('div');
+  for (const child of getLeadChildNodes(element, boundary)) {
+    wrapper.appendChild(child.cloneNode(true));
+  }
+  return wrapper.innerHTML;
+}
+
+function extractCleanInlineBoldText(element: Element): string | null {
+  if (isSkippedElement(element) || !isVisible(element) || isOwnedElement(element)) return null;
+  let hasUnsafeDescendant = false;
+  let text = '';
+  const walk = (node: Node): void => {
+    if (hasUnsafeDescendant) return;
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (node.nodeValue) text += node.nodeValue;
+      return;
+    }
+    if (!(node instanceof Element)) return;
+    const tag = node.tagName.toLowerCase();
+    if (
+      isOwnedElement(node) ||
+      isSkippedElement(node) ||
+      !isVisible(node) ||
+      INLINE_CODE_LIKE_TAGS.has(tag) ||
+      isInlineMathElement(node) ||
+      tag === 'strong' ||
+      tag === 'b'
+    ) {
+      hasUnsafeDescendant = true;
+      return;
+    }
+    node.childNodes.forEach(walk);
+  };
+  element.childNodes.forEach(walk);
+  if (hasUnsafeDescendant) return null;
+  const cleaned = text.replace(/\s+/g, ' ').trim();
+  if (!cleaned || cleaned.length > 120 || cleaned.includes('*') || cleaned.includes('$')) {
+    return null;
+  }
+  return cleaned;
+}
+
 /**
  * Text that remains after removing non-content subtrees from a translation unit.
  * Inline code and math expressions can be retained as context without making a
  * code-only or math-only wrapper eligible for translation.
  */
-export function getTranslatableText(element: Element, includeInlineCode = true): string {
+export function getTranslatableText(
+  element: Element,
+  includeInlineCode = true,
+  options?: { preserveBold?: boolean },
+): string {
   if (hasSkippedAncestor(element)) return '';
+  const preserveBold = Boolean(options?.preserveBold);
   const parts: string[] = [];
-  const visit = (node: Node): void => {
+  const visit = (node: Node, isRoot = false): void => {
     if (node.nodeType === Node.TEXT_NODE) {
       if (node.nodeValue) parts.push(node.nodeValue);
       return;
@@ -432,13 +569,31 @@ export function getTranslatableText(element: Element, includeInlineCode = true):
     if (isSkippedElement(node) || !isVisible(node)) {
       return;
     }
-    node.childNodes.forEach(visit);
+
+    if (preserveBold && !isRoot && (tag === 'strong' || tag === 'b')) {
+      const boldText = extractCleanInlineBoldText(node);
+      if (boldText) {
+        parts.push(`**${boldText}**`);
+        return;
+      }
+    }
+
+    node.childNodes.forEach((child) => visit(child, false));
   };
-  visit(element);
+
+  if (isOwnedElement(element) || isSkippedElement(element) || !isVisible(element)) {
+    return '';
+  }
+  const boundary = findFirstNestedBlockChild(element);
+  if (boundary) {
+    getLeadChildNodes(element, boundary).forEach((child) => visit(child, false));
+  } else {
+    visit(element, true);
+  }
   return parts.join(' ');
 }
 
-function isOwnedElement(element: Element): boolean {
+export function isOwnedElement(element: Element): boolean {
   return (
     element.hasAttribute(OWNED_ATTR) ||
     element.classList.contains('fluent-read-loading') ||
@@ -448,17 +603,51 @@ function isOwnedElement(element: Element): boolean {
 }
 
 /**
+ * Check whether an element or any ancestor is actively owned/translated, while
+ * allowing nested block subtrees below a scoped compound parent boundary.
+ */
+export function hasActiveTranslatedAncestor(element: Element, includeSelf = false): boolean {
+  if (
+    includeSelf &&
+    (isOwnedElement(element) ||
+      element.hasAttribute(TRANSLATED_ATTR) ||
+      element.hasAttribute(TRANSLATION_ID_ATTR) ||
+      element.id?.startsWith('fluent-read-'))
+  ) {
+    return true;
+  }
+
+  let child: Element = element;
+  let parent = element.parentElement;
+  while (parent) {
+    if (isOwnedElement(parent) || parent.id?.startsWith('fluent-read-')) {
+      return true;
+    }
+    if (parent.hasAttribute(TRANSLATED_ATTR) || parent.hasAttribute(TRANSLATION_ID_ATTR)) {
+      if (parent.hasAttribute(SCOPED_ATTR)) {
+        const boundary = findFirstNestedBlockChild(parent);
+        if (boundary && isElementAtOrAfterBoundary(parent, child, boundary)) {
+          child = parent;
+          parent = parent.parentElement;
+          continue;
+        }
+      }
+      return true;
+    }
+    child = parent;
+    parent = parent.parentElement;
+  }
+  return false;
+}
+
+/**
  * Translation discovery must not descend into FluentRead UI, an existing
  * translation, or extension-owned status/retry markup. This is intentionally
  * separate from `isOwnedElement`: serialization runs inside a translated root
  * and only needs to remove the owned descendants themselves.
  */
 function isInsideExcludedTree(element: Element): boolean {
-  return Boolean(
-    element.closest(
-      `[${OWNED_ATTR}], [${TRANSLATED_ATTR}], [${TRANSLATION_ID_ATTR}], [id^="fluent-read-"]`,
-    ),
-  );
+  return hasActiveTranslatedAncestor(element, true);
 }
 
 /**
@@ -466,7 +655,7 @@ function isInsideExcludedTree(element: Element): boolean {
  * invisible. The computed-style check is only used when it has an explicit
  * hidden value, which also handles fixed-position elements correctly.
  */
-function isVisible(element: Element): boolean {
+export function isVisible(element: Element): boolean {
   let current: Element | null = element;
   while (current) {
     if (
@@ -558,12 +747,244 @@ export function minWordsForElement(element?: Element | null): number {
   return 3;
 }
 
+const NON_CONTENT_LIST_ROLES = new Set([
+  'navigation',
+  'menu',
+  'menubar',
+  'tablist',
+  'toolbar',
+  'tree',
+  'listbox',
+  'breadcrumb',
+]);
+const CONTENT_LANDMARK_SELECTOR =
+  'article, main, [role="main"], .markdown-body, .prose, .post-content, .article-content, .entry-content';
+const ACRONYM_ONLY_RE = /^[A-Z0-9_-]{2,8}$/;
+
+function getDirectListItems(list: Element): Element[] {
+  return Array.from(list.children).filter(
+    (child) => child.tagName.toLowerCase() === 'li' && !isOwnedElement(child) && isVisible(child),
+  );
+}
+
+function getDirectDefinitionElements(dl: Element): { dts: Element[]; dds: Element[] } {
+  const dts: Element[] = [];
+  const dds: Element[] = [];
+  for (const child of Array.from(dl.children)) {
+    if (isOwnedElement(child) || !isVisible(child)) continue;
+    const tag = child.tagName.toLowerCase();
+    if (tag === 'dt') {
+      dts.push(child);
+    } else if (tag === 'dd') {
+      dds.push(child);
+    } else if (tag === 'div') {
+      for (const nested of Array.from(child.children)) {
+        if (isOwnedElement(nested) || !isVisible(nested)) continue;
+        const nestedTag = nested.tagName.toLowerCase();
+        if (nestedTag === 'dt') dts.push(nested);
+        else if (nestedTag === 'dd') dds.push(nested);
+      }
+    }
+  }
+  return { dts, dds };
+}
+
+function isLinkOnlyShortListItem(item: Element): boolean {
+  const significantChildren = Array.from(item.childNodes).filter((child) => {
+    if (child.nodeType === Node.TEXT_NODE) return hasMeaningfulText(child.nodeValue);
+    if (!(child instanceof Element)) return false;
+    return !isOwnedElement(child) && isVisible(child);
+  });
+  if (significantChildren.length !== 1) return false;
+  const only = significantChildren[0];
+  if (!(only instanceof Element) || only.tagName.toLowerCase() !== 'a') return false;
+  return countMeaningfulWords(getTranslatableText(item, false)) < 3;
+}
+
+export function isContentList(element: Element): boolean {
+  const tag = element.tagName.toLowerCase();
+  if (tag !== 'ul' && tag !== 'ol' && tag !== 'dl') return false;
+  if (
+    !element.isConnected ||
+    !isVisible(element) ||
+    isSkippedElement(element) ||
+    hasSkippedAncestor(element) ||
+    isInsideExcludedTree(element)
+  ) {
+    return false;
+  }
+
+  const roles = element.getAttribute('role')?.toLowerCase().split(/\s+/u).filter(Boolean) ?? [];
+  if (roles.some((role) => NON_CONTENT_LIST_ROLES.has(role))) return false;
+  if (
+    element.closest(
+      '[role="navigation"], [role="menu"], [role="menubar"], [role="tablist"], [role="toolbar"], [role="breadcrumb"]',
+    )
+  ) {
+    return false;
+  }
+  const ariaLabel = element.getAttribute('aria-label') || '';
+  if (/\b(?:pagination|breadcrumb)\b/i.test(ariaLabel)) return false;
+
+  if (tag === 'dl') {
+    const { dts, dds } = getDirectDefinitionElements(element);
+    return dts.length >= 1 && dds.length >= 1;
+  }
+
+  const items = getDirectListItems(element);
+  if (items.length < 2) return false;
+
+  const interactiveCount = items.filter((item) =>
+    Boolean(item.querySelector('button, select, textarea, input:not([type="checkbox"])')),
+  ).length;
+  if (interactiveCount / items.length > 0.5) return false;
+
+  if (!element.closest(CONTENT_LANDMARK_SELECTOR)) {
+    const linkOnlyCount = items.filter((item) => isLinkOnlyShortListItem(item)).length;
+    if (linkOnlyCount / items.length > 0.8) return false;
+  }
+
+  return true;
+}
+
+export function isContentTable(element: Element): boolean {
+  if (element.tagName.toLowerCase() !== 'table') return false;
+  if (
+    !element.isConnected ||
+    !isVisible(element) ||
+    isSkippedElement(element) ||
+    hasSkippedAncestor(element) ||
+    isInsideExcludedTree(element)
+  ) {
+    return false;
+  }
+
+  if (element.querySelector('table, article, section, main, form')) return false;
+
+  const visibleRows = Array.from(element.querySelectorAll('tr')).filter(
+    (tr) => tr.closest('table') === element && isVisible(tr),
+  );
+  if (visibleRows.length < 2 && !element.querySelector('thead, th')) return false;
+
+  const cellsWithText = Array.from(element.querySelectorAll('td, th')).filter(
+    (cell) =>
+      cell.closest('table') === element &&
+      isVisible(cell) &&
+      hasMeaningfulText(getTranslatableText(cell, false)),
+  );
+  return cellsWithText.length >= 2;
+}
+
+function resolveStructuredHostItem(element: Element): { tag: string; host: Element } | null {
+  const tag = element.tagName.toLowerCase();
+  if (tag === 'li' || tag === 'dt' || tag === 'dd' || tag === 'td' || tag === 'th') {
+    return { tag, host: element };
+  }
+  if (tag === 'p') {
+    const parent = element.parentElement;
+    if (!parent) return null;
+    const parentTag = parent.tagName.toLowerCase();
+    if (parentTag !== 'li' && parentTag !== 'dd' && parentTag !== 'td' && parentTag !== 'th') {
+      return null;
+    }
+    const hasLeadDirectText = Array.from(parent.childNodes).some(
+      (child) => child.nodeType === Node.TEXT_NODE && hasMeaningfulText(child.nodeValue),
+    );
+    if (hasLeadDirectText) return null;
+    const directBlocks = Array.from(parent.children).filter(
+      (child) =>
+        !isOwnedElement(child) &&
+        isVisible(child) &&
+        !['ul', 'ol', 'dl'].includes(child.tagName.toLowerCase()),
+    );
+    if (directBlocks.length === 1 && directBlocks[0] === element) {
+      return { tag: parentTag, host: parent };
+    }
+  }
+  return null;
+}
+
+function findListLeadInSibling(list: Element): Element | null {
+  let prev = list.previousElementSibling;
+  let steps = 0;
+  while (prev && steps < 2) {
+    steps++;
+    const tag = prev.tagName.toLowerCase();
+    if (
+      !isSkippedElement(prev) &&
+      isVisible(prev) &&
+      !isOwnedElement(prev) &&
+      hasMeaningfulText(prev.textContent)
+    ) {
+      if (/^(?:p|h[2-6]|figcaption)$/.test(tag)) return prev;
+      return null;
+    }
+    prev = prev.previousElementSibling;
+  }
+  return null;
+}
+
+export function canExemptShortStructuredItem(element: Element, plainText?: string): boolean {
+  const resolved = resolveStructuredHostItem(element);
+  if (!resolved) return false;
+
+  const raw = plainText !== undefined ? plainText : getTranslatableText(element, false);
+  const value = raw.replace(/\s+/gu, ' ').trim();
+  if (!value || isPureCodeContent(value) || isNumericContent(value)) return false;
+  if (ACRONYM_ONLY_RE.test(value)) return false;
+
+  const letters = value.match(LETTERS_RE)?.length ?? 0;
+
+  if (resolved.tag === 'li') {
+    const list = resolved.host.closest('ul, ol');
+    if (!list || !isContentList(list) || letters < 3) return false;
+
+    const leadIn = findListLeadInSibling(list);
+    if (leadIn && countMeaningfulWords(getTranslatableText(leadIn, false)) >= 2) {
+      return true;
+    }
+
+    const siblings = getDirectListItems(list);
+    const wordCounts = siblings.map((sib) => countMeaningfulWords(getTranslatableText(sib, false)));
+    if (wordCounts.some((count) => count >= 3)) return true;
+    const twoPlusCount = wordCounts.filter((count) => count >= 2).length;
+    return siblings.length > 0 && twoPlusCount / siblings.length >= 0.4;
+  }
+
+  if (resolved.tag === 'dt') {
+    const dl = resolved.host.closest('dl');
+    if (!dl || !isContentList(dl) || letters < 2) return false;
+    const { dds } = getDirectDefinitionElements(dl);
+    return dds.some((dd) => countMeaningfulWords(getTranslatableText(dd, false)) >= 2);
+  }
+
+  if (resolved.tag === 'dd') {
+    const dl = resolved.host.closest('dl');
+    return Boolean(dl && isContentList(dl) && letters >= 2);
+  }
+
+  if (resolved.tag === 'td' || resolved.tag === 'th') {
+    const table = resolved.host.closest('table');
+    return Boolean(table && isContentTable(table) && letters >= 2);
+  }
+
+  return false;
+}
+
+export function shouldTranslateElement(element: Element): boolean {
+  const text = getTranslatableText(element, false);
+  if (shouldTranslateContent(text, minWordsForElement(element))) {
+    return true;
+  }
+  if (canExemptShortStructuredItem(element, text)) {
+    return shouldTranslateContent(text, 1, true);
+  }
+  return false;
+}
+
 function hasTranslatableText(element: Element): boolean {
   // Inline code enriches a prose translation, but code alone is not prose.
-  return (
-    !isOwnedElement(element) &&
-    shouldTranslateContent(getTranslatableText(element, false), minWordsForElement(element))
-  );
+  return !isOwnedElement(element) && shouldTranslateElement(element);
 }
 
 function isMainlyNumericContent(element: Element): boolean {
@@ -574,11 +995,28 @@ function isMainlyNumericContent(element: Element): boolean {
   const textNodes: string[] = [];
   if (typeof document !== 'undefined') {
     const showText = typeof NodeFilter === 'undefined' ? 4 : NodeFilter.SHOW_TEXT;
-    const walker = document.createTreeWalker(element, showText);
-    let current: Node | null;
-    while ((current = walker.nextNode())) {
-      const value = stripWhitespace(current.textContent || '');
-      if (value) textNodes.push(value);
+    const boundary = findFirstNestedBlockChild(element);
+    if (boundary) {
+      for (const leadNode of getLeadChildNodes(element, boundary)) {
+        if (leadNode.nodeType === Node.TEXT_NODE) {
+          const value = stripWhitespace(leadNode.textContent || '');
+          if (value) textNodes.push(value);
+        } else if (leadNode instanceof Element && !isOwnedElement(leadNode)) {
+          const walker = document.createTreeWalker(leadNode, showText);
+          let current: Node | null;
+          while ((current = walker.nextNode())) {
+            const value = stripWhitespace(current.textContent || '');
+            if (value) textNodes.push(value);
+          }
+        }
+      }
+    } else {
+      const walker = document.createTreeWalker(element, showText);
+      let current: Node | null;
+      while ((current = walker.nextNode())) {
+        const value = stripWhitespace(current.textContent || '');
+        if (value) textNodes.push(value);
+      }
     }
   }
   return (
@@ -655,12 +1093,23 @@ export function grabAllNode(rootNode: Node): Element[] {
 
   const visit = (element: Element) => {
     if (!element || !element.isConnected) return;
-    if (
-      isSkippedElement(element) ||
-      !isVisible(element) ||
-      isOwnedElement(element) ||
-      isInsideExcludedTree(element)
-    ) {
+    if (isSkippedElement(element) || !isVisible(element) || isOwnedElement(element)) {
+      return;
+    }
+
+    if (isInsideExcludedTree(element)) {
+      if (element.hasAttribute(SCOPED_ATTR) && !hasActiveTranslatedAncestor(element, false)) {
+        const nestedBoundary = findFirstNestedBlockChild(element);
+        if (nestedBoundary) {
+          let sibling: Element | null = nestedBoundary;
+          while (sibling) {
+            if (isNestedBlockChild(sibling) || !inlineSet.has(sibling.tagName.toLowerCase())) {
+              visit(sibling);
+            }
+            sibling = sibling.nextElementSibling;
+          }
+        }
+      }
       return;
     }
 
@@ -675,6 +1124,22 @@ export function grabAllNode(rootNode: Node): Element[] {
         : isTranslationCandidate(element)
           ? element
           : false;
+
+    const nestedBoundary = findFirstNestedBlockChild(element);
+    if (nestedBoundary) {
+      if (candidate && !seen.has(candidate)) {
+        seen.add(candidate);
+        result.push(candidate);
+      }
+      let sibling: Element | null = nestedBoundary;
+      while (sibling) {
+        if (isNestedBlockChild(sibling) || !inlineSet.has(sibling.tagName.toLowerCase())) {
+          visit(sibling);
+        }
+        sibling = sibling.nextElementSibling;
+      }
+      return;
+    }
 
     if (candidate && !seen.has(candidate)) {
       seen.add(candidate);
@@ -739,7 +1204,15 @@ export function grabNode(node: Node | null | undefined): Element | false {
       }
     }
 
-    element = element.parentElement;
+    const parent = element.parentElement;
+    if (parent && COMPOUND_DIRECT_TAGS.has(parent.tagName.toLowerCase())) {
+      const boundary = findFirstNestedBlockChild(parent);
+      if (boundary && isElementAtOrAfterBoundary(parent, element, boundary)) {
+        return inlineFallback;
+      }
+    }
+
+    element = parent;
   }
 
   return inlineFallback;
@@ -775,7 +1248,7 @@ function createWordSegmenter(): TextSegmenter | null {
   }
 }
 
-function countMeaningfulWords(text: string): number {
+export function countMeaningfulWords(text: string): number {
   const segmenter = createWordSegmenter();
   if (segmenter) {
     let count = 0;
@@ -901,7 +1374,11 @@ export function isPureCodeContent(text: string): boolean {
  * a translation cannot add useful information. Length is not a reason to
  * skip: a Wikipedia paragraph of any size remains eligible.
  */
-export function shouldTranslateContent(text: string, minWords = 3): boolean {
+export function shouldTranslateContent(
+  text: string,
+  minWords = 3,
+  allowShortSingleToken = false,
+): boolean {
   if (!text || typeof text !== 'string') return false;
   const value = text.replace(/\s+/gu, ' ').trim();
   if (!value || isPureCodeContent(value) || isNumericContent(value)) return false;
@@ -912,7 +1389,7 @@ export function shouldTranslateContent(text: string, minWords = 3): boolean {
   // A one-token two-letter label (OK, Go, No, etc.) is normally a button
   // state, abbreviation, or name. Longer prose and CJK phrases remain valid.
   const words = value.split(/\s+/u).filter(Boolean);
-  if (words.length === 1 && letters <= 2) return false;
+  if (!allowShortSingleToken && words.length === 1 && letters <= 2) return false;
 
   // Require three meaningful words in the unit as a whole. A per-sentence
   // minimum previously rejected Wikipedia paragraphs because citation markers
@@ -1039,7 +1516,9 @@ export function LLMStandardHTML(node: Element): string {
     return Array.from(current.childNodes).map(serialize).join('');
   };
 
-  return Array.from(node.childNodes).map(serialize).join('');
+  const boundary = findFirstNestedBlockChild(node);
+  const children = boundary ? getLeadChildNodes(node, boundary) : Array.from(node.childNodes);
+  return children.map(serialize).join('');
 }
 
 export function beautyHTML(text: string): string {
@@ -1083,7 +1562,19 @@ const TRUNCATION_SNAPSHOT_ATTR = 'data-fr-truncation-snapshot';
 interface TruncationSnapshot {
   lineClamp: string;
   maxHeight: string;
+  flexWrap?: string;
   hadStyleAttribute: boolean;
+}
+
+function captureTruncationSnapshot(node: HTMLElement): void {
+  if (node.hasAttribute(TRUNCATION_SNAPSHOT_ATTR)) return;
+  const snapshot: TruncationSnapshot = {
+    lineClamp: node.style.getPropertyValue('-webkit-line-clamp') || '',
+    maxHeight: node.style.getPropertyValue('max-height') || '',
+    flexWrap: node.style.getPropertyValue('flex-wrap') || '',
+    hadStyleAttribute: node.hasAttribute('style'),
+  };
+  node.setAttribute(TRUNCATION_SNAPSHOT_ATTR, JSON.stringify(snapshot));
 }
 
 export function smashTruncationStyle(node: any) {
@@ -1092,17 +1583,23 @@ export function smashTruncationStyle(node: any) {
   // has to go. Remember the site's own inline values first: restore has to put
   // them back, otherwise a `-webkit-line-clamp` set by the page silently stays
   // cancelled after the user turns translation off.
-  if (node instanceof HTMLElement && !node.hasAttribute(TRUNCATION_SNAPSHOT_ATTR)) {
-    const snapshot: TruncationSnapshot = {
-      lineClamp: node.style.getPropertyValue('-webkit-line-clamp'),
-      maxHeight: node.style.getPropertyValue('max-height'),
-      hadStyleAttribute: node.hasAttribute('style'),
-    };
-    node.setAttribute(TRUNCATION_SNAPSHOT_ATTR, JSON.stringify(snapshot));
+  if (node instanceof HTMLElement) {
+    captureTruncationSnapshot(node);
   }
   checkAndRemoveStyle(node, 'webkitLineClamp');
-  node.style.webkitLineClamp = 'unset';
-  node.style.maxHeight = 'unset';
+  if (typeof node.style.setProperty === 'function') {
+    node.style.setProperty('-webkit-line-clamp', 'unset');
+    node.style.setProperty('max-height', 'unset');
+  } else {
+    node.style.webkitLineClamp = 'unset';
+    node.style.maxHeight = 'unset';
+  }
+}
+
+export function ensureFlexWrapForBilingual(node: HTMLElement): void {
+  if (!node?.style) return;
+  captureTruncationSnapshot(node);
+  node.style.setProperty('flex-wrap', 'wrap', 'important');
 }
 
 /** Undo smashTruncationStyle and drop the snapshot marker. */
@@ -1124,10 +1621,14 @@ export function restoreTruncationStyle(node: any) {
   else node.style.removeProperty('-webkit-line-clamp');
   if (snapshot.maxHeight) node.style.setProperty('max-height', snapshot.maxHeight);
   else node.style.removeProperty('max-height');
+  if ('flexWrap' in snapshot) {
+    if (snapshot.flexWrap) node.style.setProperty('flex-wrap', snapshot.flexWrap);
+    else node.style.removeProperty('flex-wrap');
+  }
 
   // The page may not have had a style attribute at all; do not leave an empty
   // one behind, since some sites key their own styling off its presence.
-  if (!snapshot.hadStyleAttribute && node.getAttribute('style') === '') {
+  if (!snapshot.hadStyleAttribute && !node.getAttribute('style')?.trim()) {
     node.removeAttribute('style');
   }
 }

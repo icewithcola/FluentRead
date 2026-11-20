@@ -5,16 +5,32 @@ import { insertFailedTip, insertLoadingSpinner } from '../utils/icon';
 import { styles } from '@/entrypoints/utils/constant';
 import {
   beautyHTML,
+  countMeaningfulWords,
+  ensureFlexWrapForBilingual,
+  findFirstNestedBlockChild,
+  getLeadChildNodes,
+  getScopedOwnHTML,
   grabNode,
   grabAllNode,
+  hasActiveTranslatedAncestor,
+  isVisible,
   LLMStandardHTML,
   getTranslatableText,
-  minWordsForElement,
   restoreTruncationStyle,
   sanitizeTranslationHTML,
+  SCOPED_ATTR,
+  shouldTranslateElement,
   smashTruncationStyle,
   shouldTranslateContent,
 } from '@/entrypoints/main/dom';
+import {
+  buildSingleItemStructuredContext,
+  buildStructuredGroupContext,
+  getStructuredGroupInfo,
+  partitionBatchItems,
+  selectSiblingWindow,
+  type StructuredGroupInfo,
+} from '@/entrypoints/main/structuredGroup';
 import { detectlang, getCjkLanguageTag, throttle } from '@/entrypoints/utils/common';
 import { getMainDomain, replaceCompatFn } from '@/entrypoints/main/compat';
 import { config } from '@/entrypoints/utils/config';
@@ -41,9 +57,20 @@ const BILINGUAL_CLASS = 'fluent-read-bilingual';
 const BILINGUAL_CONTENT_CLASS = 'fluent-read-bilingual-content';
 const RTL_TEXT_RE = /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/;
 const BILINGUAL_CACHE_KEY_PREFIX = 'bilingual-v2:';
+const BILINGUAL_RICH_CACHE_KEY_PREFIX = 'bilingual-v3:';
 const SINGLE_CACHE_KEY_PREFIX = 'single-v2:';
 
 type RecordStatus = 'pending' | 'translating' | 'translated' | 'failed';
+
+export interface BilingualToken {
+  type: 'text' | 'bold' | 'code';
+  value: string;
+}
+
+interface BilingualFormatHint {
+  allowBold: boolean;
+  allowCode: boolean;
+}
 
 interface TranslationRecord {
   id: string;
@@ -56,7 +83,12 @@ interface TranslationRecord {
   generation: number;
   status: RecordStatus;
   lastOwnedHTML: string;
+  boundary: Element | null;
+  groupInfo: StructuredGroupInfo | null;
+  sourceHasBold: boolean;
+  sourceHasCode: boolean;
   originalFragment?: DocumentFragment;
+  preservedLeadingControls?: Node[];
 }
 
 interface TranslationContext {
@@ -69,8 +101,13 @@ interface TranslationContext {
   requestHTML: string;
   contextInfo: string;
   lastOwnedHTML: string;
+  boundary: Element | null;
+  groupInfo: StructuredGroupInfo | null;
+  sourceHasBold: boolean;
+  sourceHasCode: boolean;
   spinner?: HTMLElement;
   originalFragment?: DocumentFragment;
+  preservedLeadingControls?: Node[];
 }
 
 let hoverTimer: ReturnType<typeof setTimeout> | undefined;
@@ -82,6 +119,7 @@ let mutationObserver: MutationObserver | null = null;
 const inFlightNodes = new Set<Element>();
 const records = new WeakMap<Element, TranslationRecord>();
 const activeRecords = new Set<TranslationRecord>();
+const groupRegistry = new Map<Element, HTMLElement[]>();
 
 const AUTO_BATCH_WINDOW_MS = 25;
 const MAX_BATCH_ITEMS = 6;
@@ -92,6 +130,8 @@ interface PendingAutoItem {
   origin: string;
   cacheKey: string;
   isBilingual: boolean;
+  groupInfo: StructuredGroupInfo | null;
+  element: HTMLElement;
 }
 
 let autoBatchQueue: HTMLElement[] = [];
@@ -113,6 +153,47 @@ function isOwnedElement(element: Element): boolean {
   );
 }
 
+function getActiveBoundary(context: Pick<TranslationContext, 'element' | 'boundary'>): Element | null {
+  return context.boundary && context.boundary.parentNode === context.element
+    ? context.boundary
+    : null;
+}
+
+function findOwnedNodesForHost(
+  host: Element,
+  selector: string,
+  boundary: Element | null,
+): HTMLElement[] {
+  const matched: HTMLElement[] = [];
+  const leadNodes = getLeadChildNodes(host, boundary);
+  const visit = (node: Node): void => {
+    if (!(node instanceof Element)) return;
+    if (
+      node !== host &&
+      (node.hasAttribute(TRANSLATED_ATTR) || node.hasAttribute(TRANSLATED_ID_ATTR))
+    ) {
+      return;
+    }
+    if (node instanceof HTMLElement && node.matches(selector)) {
+      matched.push(node);
+      return;
+    }
+    Array.from(node.children).forEach(visit);
+  };
+  for (const lead of leadNodes) {
+    visit(lead);
+  }
+  return matched;
+}
+
+function removeOwnedForHost(host: Element, boundary: Element | null): void {
+  findOwnedNodesForHost(
+    host,
+    `[${OWNED_ATTR}], .fluent-read-loading, .${BILINGUAL_CONTENT_CLASS}, .fluent-read-retry-wrapper`,
+    boundary,
+  ).forEach((owned) => owned.remove());
+}
+
 function removeOwnedDescendants(element: Element): void {
   element
     .querySelectorAll(
@@ -129,7 +210,7 @@ function stripOwnedHTML(value: string): string {
 }
 
 function contentMatches(context: TranslationContext): boolean {
-  const current = context.element.innerHTML;
+  const current = getScopedOwnHTML(context.element, getActiveBoundary(context));
   return (
     current === context.lastOwnedHTML ||
     stripOwnedHTML(current) === stripOwnedHTML(context.lastOwnedHTML)
@@ -137,7 +218,7 @@ function contentMatches(context: TranslationContext): boolean {
 }
 
 function syncOwnedContent(context: TranslationContext): void {
-  context.lastOwnedHTML = context.element.innerHTML;
+  context.lastOwnedHTML = getScopedOwnHTML(context.element, getActiveBoundary(context));
   if (context.record) context.record.lastOwnedHTML = context.lastOwnedHTML;
 }
 
@@ -145,40 +226,102 @@ function normalizeCacheSource(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
-// v2 includes inline <code> in translation input. Namespacing prevents an
-// older cached result, generated without that context, from being reused.
+// v2 includes inline <code> in translation input; v3 preserves **bold** emphasis for LLM output.
+// Short 1-2 word structured slots include a structural context hash to avoid cross-context collisions.
 function bilingualCacheKey(context: TranslationContext): string {
-  return `${BILINGUAL_CACHE_KEY_PREFIX}${normalizeCacheSource(context.sourceText)}`;
+  const prefix = context.sourceHasBold
+    ? BILINGUAL_RICH_CACHE_KEY_PREFIX
+    : BILINGUAL_CACHE_KEY_PREFIX;
+  const shortPrefix =
+    context.groupInfo && countMeaningfulWords(context.sourceText) <= 2
+      ? `ctx-${context.groupInfo.shortContextHash}:`
+      : '';
+  return `${prefix}${shortPrefix}${normalizeCacheSource(context.sourceText)}`;
 }
 
 function singleCacheKey(context: TranslationContext): string {
-  return `${SINGLE_CACHE_KEY_PREFIX}${normalizeCacheSource(context.requestHTML || context.sourceHTML)}`;
+  const shortPrefix =
+    context.groupInfo && countMeaningfulWords(context.sourceText) <= 2
+      ? `ctx-${context.groupInfo.shortContextHash}:`
+      : '';
+  return `${SINGLE_CACHE_KEY_PREFIX}${shortPrefix}${normalizeCacheSource(
+    context.requestHTML || context.sourceHTML,
+  )}`;
 }
 
-/** Move the original live children out before replacing innerHTML. */
+function isLeadingTaskCheckbox(node: Node): boolean {
+  return (
+    typeof HTMLInputElement !== 'undefined' &&
+    node instanceof HTMLInputElement &&
+    node.type.toLowerCase() === 'checkbox'
+  );
+}
+
+/** Move the original live children out before replacing lead/inner HTML. */
 function captureOriginalChildren(context: TranslationContext): void {
   const record = context.record;
   if (record?.originalFragment || context.originalFragment || !context.element.firstChild) return;
+
+  const activeBoundary = getActiveBoundary(context);
+  const leadNodes = getLeadChildNodes(context.element, activeBoundary);
+  if (leadNodes.length === 0) return;
+
   const fragment = document.createDocumentFragment();
-  while (context.element.firstChild) fragment.appendChild(context.element.firstChild);
-  if (record) record.originalFragment = fragment;
-  else context.originalFragment = fragment;
+  const preservedControls: Node[] = [];
+  let sawMeaningfulLead = false;
+
+  for (const child of leadNodes) {
+    if (child instanceof Element && isOwnedElement(child)) continue;
+    if (!sawMeaningfulLead && isLeadingTaskCheckbox(child)) {
+      preservedControls.push(child);
+      continue;
+    }
+    if (
+      (child.nodeType === Node.TEXT_NODE && Boolean(child.nodeValue?.trim())) ||
+      (child instanceof Element && Boolean(child.textContent?.trim()))
+    ) {
+      sawMeaningfulLead = true;
+    }
+    fragment.appendChild(child);
+  }
+
+  if (record) {
+    record.originalFragment = fragment;
+    record.preservedLeadingControls = preservedControls.length > 0 ? preservedControls : undefined;
+  } else {
+    context.originalFragment = fragment;
+    context.preservedLeadingControls = preservedControls.length > 0 ? preservedControls : undefined;
+  }
 }
 
 /** Restore original child node identity, including listeners attached by page code. */
 function restoreCapturedChildren(context: TranslationContext): boolean {
   const fragment = context.record?.originalFragment ?? context.originalFragment;
   if (!fragment || !fragment.firstChild || !context.element.isConnected) return false;
-  while (context.element.firstChild) context.element.firstChild.remove();
-  context.element.appendChild(fragment);
-  context.lastOwnedHTML = context.element.innerHTML;
-  if (context.record) context.record.lastOwnedHTML = context.lastOwnedHTML;
+
+  const activeBoundary = getActiveBoundary(context);
+  const preservedSet = new Set<Node>(
+    context.record?.preservedLeadingControls ?? context.preservedLeadingControls ?? [],
+  );
+
+  for (const child of getLeadChildNodes(context.element, activeBoundary)) {
+    if (!preservedSet.has(child)) {
+      child.parentNode?.removeChild(child);
+    }
+  }
+
+  context.element.insertBefore(fragment, activeBoundary);
+  syncOwnedContent(context);
   return true;
 }
 
 function clearCapturedChildren(context: TranslationContext): void {
-  if (context.record) context.record.originalFragment = undefined;
+  if (context.record) {
+    context.record.originalFragment = undefined;
+    context.record.preservedLeadingControls = undefined;
+  }
   context.originalFragment = undefined;
+  context.preservedLeadingControls = undefined;
 }
 
 function restoreAfterApplyFailure(context: TranslationContext): void {
@@ -210,9 +353,9 @@ function removeSpinner(context: TranslationContext): void {
   context.spinner = undefined;
 }
 
-function removeFailureMarker(element: Element): void {
+function removeFailureMarker(element: Element, boundary: Element | null = null): void {
   element.classList.remove('fluent-read-failure');
-  removeOwnedDescendants(element);
+  removeOwnedForHost(element, boundary);
 }
 
 function setRecordStatus(record: TranslationRecord, status: RecordStatus): void {
@@ -228,33 +371,44 @@ function releaseRecord(record: TranslationRecord): void {
   if (record.element.getAttribute(TRANSLATED_ID_ATTR) === record.id) {
     record.element.removeAttribute(TRANSLATED_ID_ATTR);
     record.element.removeAttribute(TRANSLATED_ATTR);
+    record.element.removeAttribute(SCOPED_ATTR);
   }
 }
 
 function createRecord(element: Element, generation: number): TranslationRecord | null {
   if (!(element instanceof HTMLElement) || !element.isConnected) return null;
   if (element.hasAttribute(TRANSLATED_ID_ATTR) || element.hasAttribute(TRANSLATED_ATTR)) return null;
-  if (!shouldTranslateContent(getTranslatableText(element, false), minWordsForElement(element))) {
+  if (!shouldTranslateElement(element)) {
     return null;
   }
+
+  const boundary = findFirstNestedBlockChild(element);
+  const isLlm = servicesType.isUseModel(config.service);
+  const originalText = getTranslatableText(element, true, { preserveBold: isLlm });
+  const originalHTML = getScopedOwnHTML(element, boundary);
 
   const record: TranslationRecord = {
     id: `fr-node-${nodeIdCounter++}`,
     element,
-    originalHTML: element.innerHTML,
+    originalHTML,
     originalOuterHTML: element.outerHTML,
-    originalText: getTranslatableText(element),
+    originalText,
     requestHTML: LLMStandardHTML(element),
     contextInfo: buildPageContext(element),
     generation,
     status: 'pending',
-    lastOwnedHTML: element.innerHTML,
+    lastOwnedHTML: originalHTML,
+    boundary,
+    groupInfo: getStructuredGroupInfo(element),
+    sourceHasBold: isLlm && /\*\*[^*]+\*\*/.test(originalText),
+    sourceHasCode: /`[^`]+`/.test(originalText),
   };
   records.set(element, record);
   activeRecords.add(record);
   originalContents.set(record.id, record.originalHTML);
   element.setAttribute(TRANSLATED_ID_ATTR, record.id);
   element.setAttribute(TRANSLATED_ATTR, 'pending');
+  if (boundary) element.setAttribute(SCOPED_ATTR, 'true');
   return record;
 }
 
@@ -263,10 +417,7 @@ function beginContext(element: HTMLElement, forceRetry = false): TranslationCont
   // Manual hover calls can bypass DOM discovery, so apply the same cheap gate
   // before allocating request state. Existing records keep their captured
   // source, which also makes retries stable if the page changed meanwhile.
-  if (
-    !record &&
-    !shouldTranslateContent(getTranslatableText(element, false), minWordsForElement(element))
-  ) {
+  if (!record && !shouldTranslateElement(element)) {
     return null;
   }
   if (record) {
@@ -274,15 +425,23 @@ function beginContext(element: HTMLElement, forceRetry = false): TranslationCont
     if (record.status === 'translating') return null;
     if (record.status === 'translated' && !forceRetry) return null;
 
+    const activeBoundary =
+      record.boundary && record.boundary.parentNode === element ? record.boundary : null;
     // A retry may remove only extension-owned failure UI. If the page changed
     // meanwhile, do not replace the user's current content.
-    const beforeCleanup = element.innerHTML;
+    const beforeCleanup = getScopedOwnHTML(element, activeBoundary);
     if (stripOwnedHTML(beforeCleanup) !== stripOwnedHTML(record.lastOwnedHTML)) return null;
-    removeFailureMarker(element);
+    removeFailureMarker(element, activeBoundary);
     if (record.originalFragment?.firstChild) {
-      while (element.firstChild) element.firstChild.remove();
-      element.appendChild(record.originalFragment);
+      const preservedSet = new Set<Node>(record.preservedLeadingControls ?? []);
+      for (const child of getLeadChildNodes(element, activeBoundary)) {
+        if (!preservedSet.has(child)) {
+          child.parentNode?.removeChild(child);
+        }
+      }
+      element.insertBefore(record.originalFragment, activeBoundary);
       record.originalFragment = undefined;
+      record.preservedLeadingControls = undefined;
     }
     record.status = 'translating';
     record.lastOwnedHTML = record.originalHTML;
@@ -292,16 +451,26 @@ function beginContext(element: HTMLElement, forceRetry = false): TranslationCont
     inFlightNodes.add(element);
   }
 
+  const boundary = record ? record.boundary : findFirstNestedBlockChild(element);
+  const isLlm = servicesType.isUseModel(config.service);
+  const sourceText =
+    record?.originalText ?? getTranslatableText(element, true, { preserveBold: isLlm });
+  const sourceHTML = record?.originalHTML ?? getScopedOwnHTML(element, boundary);
+
   const context: TranslationContext = {
     element,
     record,
     generation: sessionGeneration,
-    sourceHTML: record?.originalHTML ?? element.innerHTML,
+    sourceHTML,
     sourceOuterHTML: record?.originalOuterHTML ?? element.outerHTML,
-    sourceText: record?.originalText ?? getTranslatableText(element),
+    sourceText,
     requestHTML: record?.requestHTML ?? LLMStandardHTML(element),
     contextInfo: record?.contextInfo ?? buildPageContext(element),
-    lastOwnedHTML: record?.originalHTML ?? element.innerHTML,
+    lastOwnedHTML: sourceHTML,
+    boundary,
+    groupInfo: record ? record.groupInfo : getStructuredGroupInfo(element),
+    sourceHasBold: record ? record.sourceHasBold : isLlm && /\*\*[^*]+\*\*/.test(sourceText),
+    sourceHasCode: record ? record.sourceHasCode : /`[^`]+`/.test(sourceText),
   };
   return context;
 }
@@ -326,7 +495,9 @@ function invalidateContext(context: TranslationContext): void {
   // otherwise preserve an independent page mutation.
   const canRestore = context.element.isConnected && contentMatches(context);
   if (!canRestore || !restoreCapturedChildren(context)) {
-    if (context.element.isConnected) removeOwnedDescendants(context.element);
+    if (context.element.isConnected) {
+      removeOwnedForHost(context.element, getActiveBoundary(context));
+    }
   }
   clearCapturedChildren(context);
   if (context.record && activeRecords.has(context.record)) {
@@ -338,10 +509,9 @@ function invalidateContext(context: TranslationContext): void {
 
 function finishTranslated(context: TranslationContext): void {
   removeSpinner(context);
-  context.lastOwnedHTML = context.element.innerHTML;
+  syncOwnedContent(context);
   incrementTranslationCount();
   if (context.record) {
-    context.record.lastOwnedHTML = context.lastOwnedHTML;
     setRecordStatus(context.record, 'translated');
   } else {
     clearCapturedChildren(context);
@@ -357,19 +527,169 @@ function finishFailed(context: TranslationContext, error: unknown): void {
   const spinner = context.spinner;
   removeSpinner(context);
   restoreAfterApplyFailure(context);
-  clearBilingualOutput(context.element);
-  insertFailedTip(context.element, String(error || '翻译失败'), spinner as HTMLElement);
-  context.element.querySelectorAll('.fluent-read-retry-wrapper').forEach(markOwned);
-  context.lastOwnedHTML = context.element.innerHTML;
+  const activeBoundary = getActiveBoundary(context);
+  clearBilingualOutput(context.element, activeBoundary);
+  insertFailedTip(
+    context.element,
+    String(error || '翻译失败'),
+    spinner as HTMLElement,
+    activeBoundary,
+  );
+  findOwnedNodesForHost(context.element, '.fluent-read-retry-wrapper', activeBoundary).forEach(
+    markOwned,
+  );
+  syncOwnedContent(context);
   if (context.record) {
-    context.record.lastOwnedHTML = context.lastOwnedHTML;
     setRecordStatus(context.record, 'failed');
   } else {
     inFlightNodes.delete(context.element);
   }
 }
 
-function appendBilingualContent(element: HTMLElement, text: string): HTMLElement {
+function formatHintForContext(context: Pick<TranslationContext, 'sourceHasBold' | 'sourceHasCode'>): BilingualFormatHint {
+  return {
+    allowBold: context.sourceHasBold,
+    allowCode: context.sourceHasCode,
+  };
+}
+
+export function tokenizeBilingualFormatting(
+  text: string,
+  options: { allowBold: boolean; allowCode: boolean },
+): BilingualToken[] {
+  if (!text) return [];
+  const { allowBold, allowCode } = options;
+  if (!allowBold && !allowCode) return [{ type: 'text', value: text }];
+
+  const tokens: BilingualToken[] = [];
+  let textBuf = '';
+  const flushText = () => {
+    if (textBuf) {
+      tokens.push({ type: 'text', value: textBuf });
+      textBuf = '';
+    }
+  };
+
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+
+    // Keep $...$ inline math expressions untouched as plain text while not swallowing $100 ... $200 currency spans.
+    if (ch === '$') {
+      const closeDollar = text.indexOf('$', i + 1);
+      if (closeDollar > i) {
+        const inner = text.slice(i + 1, closeDollar);
+        if (!inner.includes('\n') && !/^\d+(?:\.\d+)?\s/.test(inner)) {
+          textBuf += text.slice(i, closeDollar + 1);
+          i = closeDollar + 1;
+          continue;
+        }
+      }
+    }
+
+    if (allowCode && ch === '`') {
+      const closeTick = text.indexOf('`', i + 1);
+      if (closeTick > i + 1) {
+        const codeVal = text.slice(i + 1, closeTick);
+        if (!codeVal.includes('\n') && codeVal.length <= 100) {
+          flushText();
+          tokens.push({ type: 'code', value: codeVal });
+          i = closeTick + 1;
+          continue;
+        }
+      }
+    }
+
+    if (allowBold && ch === '*' && text[i + 1] === '*') {
+      const closeBold = text.indexOf('**', i + 2);
+      if (closeBold > i + 2) {
+        const boldVal = text.slice(i + 2, closeBold);
+        if (!boldVal.includes('\n') && boldVal.length <= 140 && boldVal.trim().length > 0) {
+          flushText();
+          tokens.push({ type: 'bold', value: boldVal });
+          i = closeBold + 2;
+          continue;
+        }
+      }
+    }
+
+    textBuf += ch;
+    i++;
+  }
+
+  flushText();
+  return tokens;
+}
+
+const NON_MOUNTABLE_FLEX_CHILD_TAGS = new Set([
+  'svg',
+  'img',
+  'br',
+  'wbr',
+  'hr',
+  'input',
+  'a',
+  'code',
+  'kbd',
+  'samp',
+  'var',
+]);
+
+function resolveBilingualMountTarget(
+  element: HTMLElement,
+  boundary: Element | null,
+): { mountParent: HTMLElement; beforeNode: Element | null; useFlexBreak: boolean } {
+  if (boundary && boundary.parentNode === element) {
+    return { mountParent: element, beforeNode: boundary, useFlexBreak: false };
+  }
+
+  if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+    const computed = window.getComputedStyle(element);
+    const isFlex = computed.display === 'flex' || computed.display === 'inline-flex';
+    const isRow = computed.flexDirection === 'row' || computed.flexDirection === 'row-reverse';
+    if (isFlex && isRow && computed.flexWrap === 'nowrap') {
+      const hasDirectText = Array.from(element.childNodes).some(
+        (child) => child.nodeType === Node.TEXT_NODE && Boolean(child.nodeValue?.trim()),
+      );
+      if (!hasDirectText) {
+        const parentTextLen = getTranslatableText(element, false).replace(/\s+/g, '').length;
+        if (parentTextLen > 0) {
+          for (const child of Array.from(element.children)) {
+            if (
+              !(child instanceof HTMLElement) ||
+              isOwnedElement(child) ||
+              !isVisible(child) ||
+              NON_MOUNTABLE_FLEX_CHILD_TAGS.has(child.tagName.toLowerCase())
+            ) {
+              continue;
+            }
+            const childTextLen = getTranslatableText(child, false).replace(/\s+/g, '').length;
+            if (childTextLen / parentTextLen >= 0.9) {
+              const childStyle = window.getComputedStyle(child);
+              const childRowNowrap =
+                (childStyle.display === 'flex' || childStyle.display === 'inline-flex') &&
+                childStyle.flexDirection.startsWith('row') &&
+                childStyle.flexWrap === 'nowrap';
+              if (!childRowNowrap) {
+                return { mountParent: child, beforeNode: null, useFlexBreak: false };
+              }
+            }
+          }
+        }
+      }
+      ensureFlexWrapForBilingual(element);
+      return { mountParent: element, beforeNode: null, useFlexBreak: true };
+    }
+  }
+
+  return { mountParent: element, beforeNode: null, useFlexBreak: false };
+}
+
+function appendBilingualContent(
+  element: HTMLElement,
+  text: string,
+  optionsArg: { boundary?: Element | null; formatHint?: BilingualFormatHint } = {},
+): HTMLElement {
   element.classList.add(BILINGUAL_CLASS);
   const content = document.createElement('span');
   content.className = BILINGUAL_CONTENT_CLASS;
@@ -378,16 +698,55 @@ function appendBilingualContent(element: HTMLElement, text: string): HTMLElement
   markOwned(content);
   const style = options.styles.find((item) => item.value === config.style && !item.disabled);
   if (style?.class) content.classList.add(style.class);
-  setTranslationText(content, text);
-  stabilizeTranslationPlacement(content, element);
+
+  const boundary =
+    optionsArg.boundary && optionsArg.boundary.parentNode === element ? optionsArg.boundary : null;
+  const { mountParent, beforeNode, useFlexBreak } = resolveBilingualMountTarget(element, boundary);
+  if (useFlexBreak) {
+    content.classList.add('fluent-read-bilingual-flex-break');
+  }
+
+  setTranslationText(content, text, optionsArg.formatHint);
+  stabilizeTranslationPlacement(content, mountParent);
   smashTruncationStyle(element);
-  element.appendChild(content);
+  if (mountParent !== element) {
+    smashTruncationStyle(mountParent);
+  }
+  if (beforeNode && beforeNode.parentNode === mountParent) {
+    mountParent.insertBefore(content, beforeNode);
+  } else {
+    mountParent.appendChild(content);
+  }
   return content;
 }
 
-function setTranslationText(content: HTMLElement, text: string): void {
-  content.textContent = text;
+function setTranslationText(
+  content: HTMLElement,
+  text: string,
+  formatHint?: BilingualFormatHint,
+): void {
   content.dir = RTL_TEXT_RE.test(text) ? 'rtl' : 'ltr';
+  if (!formatHint || (!formatHint.allowBold && !formatHint.allowCode)) {
+    content.textContent = text;
+    return;
+  }
+
+  const tokens = tokenizeBilingualFormatting(text, formatHint);
+  while (content.firstChild) content.firstChild.remove();
+  for (const token of tokens) {
+    if (token.type === 'bold') {
+      const strong = document.createElement('strong');
+      strong.textContent = token.value;
+      content.appendChild(strong);
+    } else if (token.type === 'code') {
+      const code = document.createElement('code');
+      code.className = 'fluent-read-inline-code';
+      code.textContent = token.value;
+      content.appendChild(code);
+    } else {
+      content.appendChild(document.createTextNode(token.value));
+    }
+  }
 }
 
 function stabilizeTranslationPlacement(content: HTMLElement, host: HTMLElement): void {
@@ -408,14 +767,57 @@ function stabilizeTranslationPlacement(content: HTMLElement, host: HTMLElement):
   content.style.setProperty('order', reverse ? '-1000000' : '1000000', 'important');
 }
 
-function clearBilingualOutput(element: HTMLElement): void {
-  element.querySelectorAll(`.${BILINGUAL_CONTENT_CLASS}`).forEach((content) => content.remove());
+function clearBilingualOutput(element: HTMLElement, boundary: Element | null = null): void {
+  findOwnedNodesForHost(element, `.${BILINGUAL_CONTENT_CLASS}`, boundary).forEach((content) => {
+    const mountParent = content.parentElement;
+    content.remove();
+    if (mountParent && mountParent !== element) {
+      restoreTruncationStyle(mountParent);
+    }
+  });
   element.classList.remove(BILINGUAL_CLASS);
   restoreTruncationStyle(element);
 }
 
-function applyCachedHTML(element: HTMLElement, cached: string, trustedSourceHTML: string): boolean {
-  const safeCached = sanitizeTranslationHTML(cached, trustedSourceHTML);
+function replaceScopedLeadHTML(
+  context: TranslationContext,
+  htmlContent: string,
+  parsedNodeWrapper?: Element | null,
+): string {
+  const element = context.element;
+  const activeBoundary = getActiveBoundary(context);
+  const preservedSet = new Set<Node>(
+    context.record?.preservedLeadingControls ?? context.preservedLeadingControls ?? [],
+  );
+  const finalHTML = parsedNodeWrapper ? parsedNodeWrapper.innerHTML : htmlContent;
+
+  if (!activeBoundary && preservedSet.size === 0) {
+    element.innerHTML = finalHTML;
+    return element.innerHTML;
+  }
+
+  for (const child of getLeadChildNodes(element, activeBoundary)) {
+    if (!preservedSet.has(child)) {
+      child.parentNode?.removeChild(child);
+    }
+  }
+
+  const parsed = document.createElement('div');
+  parsed.innerHTML = finalHTML;
+  const cacheValue = parsed.innerHTML;
+  const fragment = document.createDocumentFragment();
+  while (parsed.firstChild) fragment.appendChild(parsed.firstChild);
+  element.insertBefore(fragment, activeBoundary);
+  return cacheValue;
+}
+
+function applyCachedHTML(context: TranslationContext, cached: string): boolean {
+  const element = context.element;
+  const safeCached = sanitizeTranslationHTML(cached, context.sourceHTML);
+  const activeBoundary = getActiveBoundary(context);
+  const preservedCount = (
+    context.record?.preservedLeadingControls ?? context.preservedLeadingControls ?? []
+  ).length;
   const replace = replaceCompatFn[getMainDomain(document.location.hostname)];
   const parsed = document.createElement('div');
   parsed.innerHTML = safeCached;
@@ -424,19 +826,20 @@ function applyCachedHTML(element: HTMLElement, cached: string, trustedSourceHTML
     !!replacement &&
     replacement.tagName.toLowerCase() === element.tagName.toLowerCase() &&
     parsed.childNodes.length === 1;
-  if (replace && hasMatchingOuter) {
+  if (replace && hasMatchingOuter && !activeBoundary && preservedCount === 0) {
     replace(element, safeCached);
     return !!element.innerHTML.trim();
   }
 
   // Cache entries historically contain the full outerHTML. Keep the live
-  // element identity and update only its children; fall back to the raw value
+  // element identity and update only its lead children; fall back to the raw value
   // for older/innerHTML-only cache entries.
-  element.innerHTML =
+  const matchingWrapper =
     replacement && replacement.tagName.toLowerCase() === element.tagName.toLowerCase()
-      ? replacement.innerHTML
-      : safeCached;
-  return !!element.innerHTML.trim();
+      ? replacement
+      : null;
+  const written = replaceScopedLeadHTML(context, safeCached, matchingWrapper);
+  return !!written.trim();
 }
 
 function applyTranslatedHTML(context: TranslationContext, translated: string): boolean {
@@ -448,19 +851,32 @@ function applyTranslatedHTML(context: TranslationContext, translated: string): b
   }
 
   const element = context.element;
+  const activeBoundary = getActiveBoundary(context);
   const replace = replaceCompatFn[getMainDomain(document.location.hostname)];
   removeSpinner(context);
   captureOriginalChildren(context);
+  const preservedCount = (
+    context.record?.preservedLeadingControls ?? context.preservedLeadingControls ?? []
+  ).length;
   const parsed = document.createElement('div');
   parsed.innerHTML = text;
   const matchingOuter =
     parsed.firstElementChild &&
     parsed.firstElementChild.tagName.toLowerCase() === element.tagName.toLowerCase() &&
     parsed.childNodes.length === 1;
-  if (replace && matchingOuter) replace(element, text);
-  else element.innerHTML = matchingOuter ? parsed.firstElementChild!.innerHTML : text;
-  context.lastOwnedHTML = element.innerHTML;
-  void cache.localSet(singleCacheKey(context), element.innerHTML);
+  let cacheValue: string;
+  if (replace && matchingOuter && !activeBoundary && preservedCount === 0) {
+    replace(element, text);
+    cacheValue = element.innerHTML;
+  } else {
+    cacheValue = replaceScopedLeadHTML(
+      context,
+      text,
+      matchingOuter ? parsed.firstElementChild : null,
+    );
+  }
+  syncOwnedContent(context);
+  void cache.localSet(singleCacheKey(context), cacheValue);
   finishTranslated(context);
   return true;
 }
@@ -469,12 +885,21 @@ function applyBilingualStreamChunk(context: TranslationContext, accumulated: str
   if (!accumulated?.trim()) return;
   if (!contextIsCurrent(context)) return;
   const element = context.element;
-  let streamNode = element.querySelector<HTMLElement>(`.${BILINGUAL_CONTENT_CLASS}`);
+  const activeBoundary = getActiveBoundary(context);
+  const formatHint = formatHintForContext(context);
+  let streamNode = findOwnedNodesForHost(
+    element,
+    `.${BILINGUAL_CONTENT_CLASS}`,
+    activeBoundary,
+  )[0];
   if (!streamNode) {
     removeSpinner(context);
-    streamNode = appendBilingualContent(element, '');
+    streamNode = appendBilingualContent(element, '', {
+      boundary: activeBoundary,
+      formatHint,
+    });
   }
-  setTranslationText(streamNode, accumulated);
+  setTranslationText(streamNode, accumulated, formatHint);
   syncOwnedContent(context);
 }
 
@@ -484,16 +909,26 @@ function applyBilingualResult(context: TranslationContext, text: string): void {
     return;
   }
   const element = context.element;
+  const activeBoundary = getActiveBoundary(context);
+  const formatHint = formatHintForContext(context);
   if (!text?.trim()) {
-    clearBilingualOutput(element);
+    clearBilingualOutput(element, activeBoundary);
     finishWithoutTranslation(context);
     return;
   }
   removeSpinner(context);
-  if (!element.querySelector(`.${BILINGUAL_CONTENT_CLASS}`)) appendBilingualContent(element, text);
-  else {
-    const content = element.querySelector<HTMLElement>(`.${BILINGUAL_CONTENT_CLASS}`);
-    if (content) setTranslationText(content, text);
+  const existing = findOwnedNodesForHost(
+    element,
+    `.${BILINGUAL_CONTENT_CLASS}`,
+    activeBoundary,
+  )[0];
+  if (!existing) {
+    appendBilingualContent(element, text, {
+      boundary: activeBoundary,
+      formatHint,
+    });
+  } else {
+    setTranslationText(existing, text, formatHint);
   }
   finishTranslated(context);
 }
@@ -510,13 +945,14 @@ function applySingleStreamChunk(context: TranslationContext, accumulated: string
     parsed.firstElementChild &&
     parsed.firstElementChild.tagName.toLowerCase() === element.tagName.toLowerCase() &&
     parsed.childNodes.length === 1;
-  element.innerHTML = matchingOuter ? parsed.firstElementChild!.innerHTML : safeChunk;
+  replaceScopedLeadHTML(context, safeChunk, matchingOuter ? parsed.firstElementChild : null);
   syncOwnedContent(context);
 }
 
 function renderCachedBilingualResult(context: TranslationContext, cached: string): void {
   const node = context.element;
-  context.spinner = insertLoadingSpinner(node, true);
+  const activeBoundary = getActiveBoundary(context);
+  context.spinner = insertLoadingSpinner(node, true, activeBoundary);
   markOwned(context.spinner);
   setTimeout(() => {
     if (!contextIsCurrent(context)) {
@@ -525,7 +961,10 @@ function renderCachedBilingualResult(context: TranslationContext, cached: string
     }
     removeSpinner(context);
     try {
-      appendBilingualContent(node, cached);
+      appendBilingualContent(node, cached, {
+        boundary: getActiveBoundary(context),
+        formatHint: formatHintForContext(context),
+      });
       finishTranslated(context);
     } catch (error) {
       finishFailed(context, error);
@@ -535,7 +974,8 @@ function renderCachedBilingualResult(context: TranslationContext, cached: string
 
 function renderCachedSingleResult(context: TranslationContext, cached: string): void {
   const node = context.element;
-  context.spinner = insertLoadingSpinner(node, true);
+  const activeBoundary = getActiveBoundary(context);
+  context.spinner = insertLoadingSpinner(node, true, activeBoundary);
   markOwned(context.spinner);
   setTimeout(() => {
     if (!contextIsCurrent(context)) {
@@ -545,9 +985,9 @@ function renderCachedSingleResult(context: TranslationContext, cached: string): 
     removeSpinner(context);
     try {
       captureOriginalChildren(context);
-      if (!applyCachedHTML(node, cached, context.sourceHTML)) finishWithoutTranslation(context);
+      if (!applyCachedHTML(context, cached)) finishWithoutTranslation(context);
       else {
-        context.lastOwnedHTML = node.innerHTML;
+        syncOwnedContent(context);
         finishTranslated(context);
       }
     } catch (error) {
@@ -555,6 +995,12 @@ function renderCachedSingleResult(context: TranslationContext, cached: string): 
       finishFailed(context, error);
     }
   }, 250);
+}
+
+const LIST_SLOT_TAGS = new Set(['li', 'dt', 'dd']);
+
+function isListSlotElement(element: Element, groupInfo: StructuredGroupInfo | null): boolean {
+  return Boolean(groupInfo) || LIST_SLOT_TAGS.has(element.tagName.toLowerCase());
 }
 
 function runBilingualTranslation(context: TranslationContext, forceBypassCache: boolean): void {
@@ -565,7 +1011,7 @@ function runBilingualTranslation(context: TranslationContext, forceBypassCache: 
     return;
   }
 
-  context.spinner = insertLoadingSpinner(element);
+  context.spinner = insertLoadingSpinner(element, false, getActiveBoundary(context));
   markOwned(context.spinner);
 
   const onStreamChunk = (accumulated: string) => applyBilingualStreamChunk(context, accumulated);
@@ -574,14 +1020,17 @@ function runBilingualTranslation(context: TranslationContext, forceBypassCache: 
     warmUpPageSummary();
   }
 
+  const isListSlot = isListSlotElement(element, context.groupInfo);
   const request = config.useStream && servicesType.isCustom(config.service)
     ? translateTextStream(origin, context.contextInfo, onStreamChunk, {
         bypassCacheRead: forceBypassCache,
         cacheKey: bilingualCacheKey(context),
+        isListSlot,
       })
     : translateText(origin, context.contextInfo, {
         bypassCacheRead: forceBypassCache,
         cacheKey: bilingualCacheKey(context),
+        isListSlot,
       });
 
   request
@@ -600,7 +1049,7 @@ function runSingleTranslation(context: TranslationContext, forceBypassCache: boo
     return;
   }
 
-  context.spinner = insertLoadingSpinner(element);
+  context.spinner = insertLoadingSpinner(element, false, getActiveBoundary(context));
   markOwned(context.spinner);
 
   const onStreamChunk = (accumulated: string) => applySingleStreamChunk(context, accumulated);
@@ -609,14 +1058,17 @@ function runSingleTranslation(context: TranslationContext, forceBypassCache: boo
     warmUpPageSummary();
   }
 
+  const isListSlot = isListSlotElement(element, context.groupInfo);
   const request = config.useStream && servicesType.isCustom(config.service)
     ? translateTextStream(origin, context.contextInfo, onStreamChunk, {
         bypassCacheRead: forceBypassCache,
         cacheKey: singleCacheKey(context),
+        isListSlot,
       })
     : translateText(origin, context.contextInfo, {
         bypassCacheRead: forceBypassCache,
         cacheKey: singleCacheKey(context),
+        isListSlot,
       });
 
   request
@@ -641,6 +1093,7 @@ export function restoreOriginalContent(): void {
     autoBatchTimer = undefined;
   }
   autoBatchQueue = [];
+  groupRegistry.clear();
   cancelAllTranslations();
   cancelSummaryRequest();
   clearCurrentPageSummary();
@@ -662,12 +1115,21 @@ export function restoreOriginalContent(): void {
       requestHTML: record.requestHTML,
       contextInfo: record.contextInfo,
       lastOwnedHTML: record.lastOwnedHTML,
+      boundary: record.boundary,
+      groupInfo: record.groupInfo,
+      sourceHasBold: record.sourceHasBold,
+      sourceHasCode: record.sourceHasCode,
+      preservedLeadingControls: record.preservedLeadingControls,
     };
+    const activeBoundary = getActiveBoundary(context);
     const canRestore = element.isConnected && contentMatches(context);
-    removeOwnedDescendants(element);
+    removeOwnedForHost(element, activeBoundary);
     if (canRestore) {
-      if (!restoreCapturedChildren(context) && element.innerHTML !== record.originalHTML) {
-        element.innerHTML = record.originalHTML;
+      if (!restoreCapturedChildren(context)) {
+        const currentOwn = getScopedOwnHTML(element, activeBoundary);
+        if (currentOwn !== record.originalHTML) {
+          replaceScopedLeadHTML(context, record.originalHTML);
+        }
       }
       clearCapturedChildren(context);
     } else {
@@ -680,6 +1142,7 @@ export function restoreOriginalContent(): void {
     if (element.getAttribute(TRANSLATED_ID_ATTR) === record.id) {
       element.removeAttribute(TRANSLATED_ID_ATTR);
       element.removeAttribute(TRANSLATED_ATTR);
+      element.removeAttribute(SCOPED_ATTR);
     }
     if (records.get(element) === record) records.delete(element);
   });
@@ -689,9 +1152,10 @@ export function restoreOriginalContent(): void {
 
   // Clean markers from interrupted records and legacy extension markup that
   // predates the WeakMap state.
-  document.querySelectorAll(`[${TRANSLATED_ATTR}], [${TRANSLATED_ID_ATTR}]`).forEach((node) => {
+  document.querySelectorAll(`[${TRANSLATED_ATTR}], [${TRANSLATED_ID_ATTR}], [${SCOPED_ATTR}]`).forEach((node) => {
     node.removeAttribute(TRANSLATED_ATTR);
     node.removeAttribute(TRANSLATED_ID_ATTR);
+    node.removeAttribute(SCOPED_ATTR);
   });
   document
     .querySelectorAll(
@@ -705,11 +1169,19 @@ export function restoreOriginalContent(): void {
   nodeIdCounter = 0;
 }
 
-function runBatchGroup(group: PendingAutoItem[], isBilingual: boolean): void {
-  const segByCacheKey = new Map<
-    string,
-    { segId: number; origin: string; cacheKey: string; contexts: TranslationContext[] }
-  >();
+interface BatchBucket {
+  segId: number;
+  origin: string;
+  cacheKey: string;
+  firstItem: PendingAutoItem;
+  contexts: TranslationContext[];
+}
+
+function buildBatchBuckets(group: PendingAutoItem[]): {
+  buckets: BatchBucket[];
+  itemEntries: Array<{ item: PendingAutoItem; segId: number }>;
+} {
+  const segByCacheKey = new Map<string, BatchBucket>();
   const itemEntries: Array<{ item: PendingAutoItem; segId: number }> = [];
   let nextSegId = 0;
 
@@ -721,6 +1193,7 @@ function runBatchGroup(group: PendingAutoItem[], isBilingual: boolean): void {
         segId: nextSegId++,
         origin: item.origin,
         cacheKey: item.cacheKey,
+        firstItem: item,
         contexts: [],
       };
       segByCacheKey.set(normalizedKey, bucket);
@@ -729,10 +1202,25 @@ function runBatchGroup(group: PendingAutoItem[], isBilingual: boolean): void {
     itemEntries.push({ item, segId: bucket.segId });
   }
 
+  return { buckets: Array.from(segByCacheKey.values()), itemEntries };
+}
+
+function runBatchGroup(
+  group: PendingAutoItem[],
+  isBilingual: boolean,
+  overrideContextInfo?: string,
+  precomputed?: {
+    buckets: BatchBucket[];
+    itemEntries: Array<{ item: PendingAutoItem; segId: number }>;
+  },
+): void {
+  const { buckets, itemEntries } = precomputed ?? buildBatchBuckets(group);
+
   // If in-batch deduplication leaves only one unique text, fall back to the
   // single-item path so in-flight deduplication handles all duplicates.
-  if (segByCacheKey.size === 1) {
+  if (buckets.length === 1) {
     for (const item of group) {
+      if (overrideContextInfo) item.context.contextInfo = overrideContextInfo;
       if (isBilingual) runBilingualTranslation(item.context, false);
       else runSingleTranslation(item.context, false);
     }
@@ -740,27 +1228,35 @@ function runBatchGroup(group: PendingAutoItem[], isBilingual: boolean): void {
   }
 
   for (const item of group) {
-    item.context.spinner = insertLoadingSpinner(item.context.element);
+    item.context.spinner = insertLoadingSpinner(
+      item.context.element,
+      false,
+      getActiveBoundary(item.context),
+    );
     markOwned(item.context.spinner);
   }
 
-  const batchContextInfo = buildPageContext(group[0].context.element, {
-    includePreceding: false,
-  });
+  const batchContextInfo =
+    overrideContextInfo ||
+    buildPageContext(group[0].context.element, {
+      includePreceding: false,
+    });
 
-  const requestItems: BatchTranslationRequestItem[] = Array.from(segByCacheKey.values()).map(
-    (bucket) => ({
-      id: bucket.segId,
-      origin: bucket.origin,
-      cacheKey: bucket.cacheKey,
-      onChunk: (accumulated: string) => {
-        for (const ctx of bucket.contexts) {
-          if (isBilingual) applyBilingualStreamChunk(ctx, accumulated);
-          else applySingleStreamChunk(ctx, accumulated);
-        }
-      },
-    }),
-  );
+  const requestItems: BatchTranslationRequestItem[] = buckets.map((bucket) => ({
+    id: bucket.segId,
+    origin: bucket.origin,
+    cacheKey: bucket.cacheKey,
+    isListSlot: isListSlotElement(bucket.firstItem.element, bucket.firstItem.groupInfo),
+    allowIdentity: Boolean(
+      bucket.firstItem.groupInfo && countMeaningfulWords(bucket.firstItem.context.sourceText) <= 2,
+    ),
+    onChunk: (accumulated: string) => {
+      for (const ctx of bucket.contexts) {
+        if (isBilingual) applyBilingualStreamChunk(ctx, accumulated);
+        else applySingleStreamChunk(ctx, accumulated);
+      }
+    },
+  }));
 
   translateBatch(requestItems, batchContextInfo)
     .then((resultMap) => {
@@ -773,6 +1269,11 @@ function runBatchGroup(group: PendingAutoItem[], isBilingual: boolean): void {
 
         const translated = resultMap.get(segId);
         if (translated && translated.trim()) {
+          const normalizedItemOrigin = item.origin.replace(/\s+/g, ' ').trim();
+          if (translated === item.origin || translated === normalizedItemOrigin) {
+            finishWithoutTranslation(ctx);
+            continue;
+          }
           if (isBilingual) {
             applyBilingualResult(ctx, translated);
           } else {
@@ -788,8 +1289,9 @@ function runBatchGroup(group: PendingAutoItem[], isBilingual: boolean): void {
 
         // Graceful fallback for any segment omitted or malformed in the batch response
         removeSpinner(ctx);
+        ctx.contextInfo = buildPageContext(ctx.element);
         if (isBilingual) {
-          clearBilingualOutput(ctx.element);
+          clearBilingualOutput(ctx.element, getActiveBoundary(ctx));
           syncOwnedContent(ctx);
           runBilingualTranslation(ctx, false);
         } else {
@@ -803,6 +1305,28 @@ function runBatchGroup(group: PendingAutoItem[], isBilingual: boolean): void {
         finishFailed(item.context, error);
       }
     });
+}
+
+function collectTranslatedSiblingsForGroup(
+  groupRoot: Element,
+  cachedInBatch: string[] | undefined,
+  excluded: Set<Element>,
+): string[] {
+  const siblings: string[] = [...(cachedInBatch ?? [])];
+  if (siblings.length >= 3) return siblings;
+
+  const registered = groupRegistry.get(groupRoot);
+  if (!registered) return siblings;
+
+  for (const el of registered) {
+    if (excluded.has(el)) continue;
+    const rec = records.get(el);
+    if (rec && rec.status === 'translated' && rec.originalText) {
+      siblings.push(rec.originalText);
+      if (siblings.length >= 4) break;
+    }
+  }
+  return siblings;
 }
 
 async function flushAutoBatchQueue(generation: number): Promise<void> {
@@ -825,7 +1349,14 @@ async function flushAutoBatchQueue(generation: number): Promise<void> {
 
     const origin = isBilingual ? context.sourceText : context.requestHTML;
     const cacheKey = isBilingual ? bilingualCacheKey(context) : singleCacheKey(context);
-    candidates.push({ context, origin, cacheKey, isBilingual });
+    candidates.push({
+      context,
+      origin,
+      cacheKey,
+      isBilingual,
+      groupInfo: context.groupInfo,
+      element: context.element,
+    });
   }
 
   if (candidates.length === 0) return;
@@ -839,6 +1370,7 @@ async function flushAutoBatchQueue(generation: number): Promise<void> {
     return;
   }
 
+  const cachedByGroup = new Map<Element, string[]>();
   const uncached: PendingAutoItem[] = [];
   for (let i = 0; i < candidates.length; i++) {
     const item = candidates[i];
@@ -848,6 +1380,11 @@ async function flushAutoBatchQueue(generation: number): Promise<void> {
     }
     const cached = cachedResults[i];
     if (cached) {
+      if (item.groupInfo) {
+        const list = cachedByGroup.get(item.groupInfo.groupRoot) ?? [];
+        list.push(normalizeCacheSource(item.context.sourceText));
+        cachedByGroup.set(item.groupInfo.groupRoot, list);
+      }
       if (item.isBilingual) renderCachedBilingualResult(item.context, cached);
       else renderCachedSingleResult(item.context, cached);
     } else {
@@ -857,45 +1394,61 @@ async function flushAutoBatchQueue(generation: number): Promise<void> {
 
   if (uncached.length === 0) return;
 
-  const groups: PendingAutoItem[][] = [];
-  let currentGroup: PendingAutoItem[] = [];
-  let currentChars = 0;
+  const partitioned = partitionBatchItems(uncached, {
+    maxNormalItems: MAX_BATCH_ITEMS,
+    maxNormalChars: MAX_BATCH_CHARS,
+    maxGroupItems: 10,
+    maxGroupChars: 2400,
+  });
 
-  for (const item of uncached) {
-    if (item.origin.length > MAX_BATCH_CHARS) {
-      if (currentGroup.length > 0) {
-        groups.push(currentGroup);
-        currentGroup = [];
-        currentChars = 0;
+  for (const batch of partitioned) {
+    if (batch.groupRoot !== null) {
+      const precomputed = buildBatchBuckets(batch.items);
+      const batchElements = new Set(batch.items.map((item) => item.element));
+      const leadInIncludedInBatch = batch.items.some(
+        (item) =>
+          !item.groupInfo &&
+          batch.items.some((other) => other.groupInfo?.leadInElement === item.element),
+      );
+      const cachedSiblings = collectTranslatedSiblingsForGroup(
+        batch.groupRoot,
+        cachedByGroup.get(batch.groupRoot),
+        batchElements,
+      );
+      const slotMeta = precomputed.buckets.map((bucket) => ({
+        segId: bucket.segId,
+        role: bucket.firstItem.groupInfo?.slotRole ?? ('lead-in' as const),
+        label: bucket.firstItem.groupInfo?.hierarchyLabel ?? 'lead-in',
+        groupInfo: bucket.firstItem.groupInfo,
+        text: bucket.firstItem.context.sourceText,
+      }));
+      const structuredCtx = buildStructuredGroupContext(slotMeta, {
+        groupKind: batch.groupKind,
+        leadInIncludedInBatch,
+        cachedSiblings,
+        previousTailTexts: batch.previousTailTexts,
+      });
+      const basePageCtx = buildPageContext(batch.items[0].element, { includePreceding: false });
+      const groupPageCtx = [basePageCtx, structuredCtx].filter(Boolean).join('\n');
+
+      if (batch.items.length === 1 || precomputed.buckets.length === 1) {
+        for (const item of batch.items) {
+          if (groupPageCtx) item.context.contextInfo = groupPageCtx;
+          if (item.isBilingual) runBilingualTranslation(item.context, false);
+          else runSingleTranslation(item.context, false);
+        }
+      } else {
+        runBatchGroup(batch.items, isBilingual, groupPageCtx, precomputed);
       }
-      groups.push([item]);
       continue;
     }
 
-    if (
-      currentGroup.length > 0 &&
-      (currentGroup.length >= MAX_BATCH_ITEMS || currentChars + item.origin.length > MAX_BATCH_CHARS)
-    ) {
-      groups.push(currentGroup);
-      currentGroup = [];
-      currentChars = 0;
-    }
-
-    currentGroup.push(item);
-    currentChars += item.origin.length;
-  }
-
-  if (currentGroup.length > 0) {
-    groups.push(currentGroup);
-  }
-
-  for (const group of groups) {
-    if (group.length === 1) {
-      const only = group[0];
+    if (batch.items.length === 1) {
+      const only = batch.items[0];
       if (only.isBilingual) runBilingualTranslation(only.context, false);
       else runSingleTranslation(only.context, false);
     } else {
-      runBatchGroup(group, isBilingual);
+      runBatchGroup(batch.items, isBilingual);
     }
   }
 }
@@ -924,10 +1477,26 @@ function dispatchAutoTranslation(element: HTMLElement, generation: number): void
   }
 }
 
+function registerGroupCandidates(elements: Iterable<Element>): void {
+  for (const el of elements) {
+    if (!(el instanceof HTMLElement)) continue;
+    const info = getStructuredGroupInfo(el);
+    if (!info) continue;
+    let groupList = groupRegistry.get(info.groupRoot);
+    if (!groupList) {
+      groupList = [];
+      groupRegistry.set(info.groupRoot, groupList);
+    }
+    if (!groupList.includes(el)) {
+      groupList.push(el);
+    }
+  }
+}
+
 function observeCandidate(element: Element, generation: number): void {
   if (!(element instanceof HTMLElement) || !element.isConnected) return;
   if (element.hasAttribute(TRANSLATED_ATTR) || element.hasAttribute(TRANSLATED_ID_ATTR)) return;
-  if (element.parentElement?.closest(`[${TRANSLATED_ATTR}], [${TRANSLATED_ID_ATTR}], [${OWNED_ATTR}]`)) {
+  if (hasActiveTranslatedAncestor(element, false)) {
     return;
   }
   observer?.observe(element);
@@ -937,6 +1506,7 @@ function scanMutationRoots(roots: Set<Node>, generation: number): void {
   if (!isAutoTranslating || generation !== sessionGeneration) return;
   const candidates = new Set<Element>();
   roots.forEach((root) => grabAllNode(root).forEach((candidate) => candidates.add(candidate)));
+  registerGroupCandidates(candidates);
   candidates.forEach((candidate) => {
     if (observer) observeCandidate(candidate, generation);
     else if (candidate instanceof HTMLElement) dispatchAutoTranslation(candidate, generation);
@@ -951,6 +1521,7 @@ export async function autoTranslateEnglishPage(): Promise<void> {
 
   isAutoTranslating = true;
   const generation = ++sessionGeneration;
+  registerGroupCandidates(nodes);
 
   if (config.enablePageSummary && servicesType.isUseModel(config.service)) {
     try {
@@ -969,8 +1540,35 @@ export async function autoTranslateEnglishPage(): Promise<void> {
     observer = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
         if (!entry.isIntersecting || !isAutoTranslating || generation !== sessionGeneration) return;
-        observer?.unobserve(entry.target);
-        processEntry(entry.target);
+        const target = entry.target;
+        observer?.unobserve(target);
+        if (!(target instanceof HTMLElement)) return;
+
+        if (servicesType.isUseModel(config.service)) {
+          const info = getStructuredGroupInfo(target);
+          const groupList = info ? groupRegistry.get(info.groupRoot) : undefined;
+          if (groupList && groupList.length > 1) {
+            const windowElements = selectSiblingWindow(target, groupList, {
+              maxItems: 10,
+              maxChars: 2400,
+              getCharLength: (el) => getTranslatableText(el, true).length,
+              isAvailable: (el) =>
+                el.isConnected &&
+                !el.hasAttribute(TRANSLATED_ATTR) &&
+                !el.hasAttribute(TRANSLATED_ID_ATTR) &&
+                !hasActiveTranslatedAncestor(el, false),
+            });
+            if (windowElements.length > 0) {
+              for (const el of windowElements) {
+                observer?.unobserve(el);
+                processEntry(el);
+              }
+              return;
+            }
+          }
+        }
+
+        processEntry(target);
       });
     }, { root: null, rootMargin: '100px', threshold: 0.01 });
     nodes.forEach((node) => observeCandidate(node, generation));
@@ -1042,31 +1640,58 @@ export function handleTranslation(mouseX: number, mouseY: number, delayTime = 0)
   }, delayTime);
 }
 
+function findOwnBilingualHost(node: HTMLElement): HTMLElement | null {
+  if (node.classList.contains(BILINGUAL_CLASS)) return node;
+  const boundary = findFirstNestedBlockChild(node);
+  for (const lead of getLeadChildNodes(node, boundary)) {
+    if (!(lead instanceof Element)) continue;
+    if (lead.hasAttribute(TRANSLATED_ATTR) || lead.hasAttribute(TRANSLATED_ID_ATTR)) continue;
+    if (lead instanceof HTMLElement && lead.classList.contains(BILINGUAL_CLASS)) return lead;
+    const nested = searchClassName(lead, BILINGUAL_CLASS);
+    if (
+      nested instanceof HTMLElement &&
+      !nested.hasAttribute(TRANSLATED_ATTR) &&
+      !nested.hasAttribute(TRANSLATED_ID_ATTR)
+    ) {
+      return nested;
+    }
+  }
+  return null;
+}
+
 export function handleBilingualTranslation(
   node: HTMLElement,
   slide: boolean,
   forceBypassCache = false,
 ): void {
-  const bilingualNode = searchClassName(node, BILINGUAL_CLASS) as HTMLElement | null;
+  const bilingualNode = findOwnBilingualHost(node);
   if (bilingualNode) {
     if (slide) return;
-    const spinner = insertLoadingSpinner(bilingualNode, true);
+    const record = records.get(bilingualNode);
+    const boundary =
+      record && record.boundary && record.boundary.parentNode === bilingualNode
+        ? record.boundary
+        : findFirstNestedBlockChild(bilingualNode);
+    const spinner = insertLoadingSpinner(bilingualNode, true, boundary);
     markOwned(spinner);
     const toggleGeneration = sessionGeneration;
-    const expectedHTML = bilingualNode.innerHTML;
+    const expectedHTML = getScopedOwnHTML(bilingualNode, boundary);
     setTimeout(() => {
+      const currentBoundary =
+        record && record.boundary && record.boundary.parentNode === bilingualNode
+          ? record.boundary
+          : findFirstNestedBlockChild(bilingualNode);
       if (
         toggleGeneration !== sessionGeneration ||
         !bilingualNode.isConnected ||
-        stripOwnedHTML(bilingualNode.innerHTML) !== stripOwnedHTML(expectedHTML)
+        stripOwnedHTML(getScopedOwnHTML(bilingualNode, currentBoundary)) !==
+          stripOwnedHTML(expectedHTML)
       ) {
         spinner.remove();
         return;
       }
       spinner.remove();
-      bilingualNode.querySelector(`.${BILINGUAL_CONTENT_CLASS}`)?.remove();
-      bilingualNode.classList.remove(BILINGUAL_CLASS);
-      restoreTruncationStyle(bilingualNode);
+      clearBilingualOutput(bilingualNode, currentBoundary);
     }, 250);
     return;
   }

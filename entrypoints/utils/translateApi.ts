@@ -486,6 +486,7 @@ export async function translateText(
     useCache = config.useCache,
     bypassCacheRead = false,
     cacheKey = origin,
+    isListSlot = false,
   } = options;
   const retryLimit = Number.isFinite(Number(maxRetries))
     ? Math.max(0, Math.floor(Number(maxRetries)))
@@ -548,9 +549,12 @@ export async function translateText(
     };
 
     let combined = '';
-    for (const chunk of chunks) {
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
       if (!chunk.trim()) continue;
-      const chunkResult = await attempt(chunk, 0);
+      const rawChunkResult = await attempt(chunk, 0);
+      const chunkResult =
+        i === 0 ? stripSpuriousListMarker(origin, rawChunkResult, isListSlot, false) : rawChunkResult;
       if (chunkResult) {
         combined = appendTranslatedChunk(combined, chunkResult);
       }
@@ -594,13 +598,71 @@ export interface TranslateOptions {
   bypassCacheRead?: boolean;
   /** Optional cache namespace when the request format changes without changing its text. */
   cacheKey?: string;
+  /** Whether this unit corresponds to a list/definition/table slot. */
+  isListSlot?: boolean;
 }
 
 export interface BatchTranslationRequestItem {
   id: number;
   origin: string;
   cacheKey: string;
+  isListSlot?: boolean;
+  allowIdentity?: boolean;
   onChunk?: (accumulated: string) => void;
+}
+
+const SOURCE_BULLET_PREFIX_RE = /^[-*•·▪▫◦‣⁃]\s+/;
+const SOURCE_ORDINAL_PREFIX_RE = /^(?:[1-9]\d?[.)、]\s+|（[1-9]\d?）\s*|\([1-9]\d?\)\s+|[a-zA-Z][.)]\s+)/;
+const SPURIOUS_BULLET_PREFIX_RE = /^[-*•·▪▫◦‣⁃]\s+/;
+const SPURIOUS_ORDINAL_PREFIX_RE = /^(?:[1-9]\d?[.)、]\s+|（[1-9]\d?）\s*|\([1-9]\d?\)\s+)/;
+const SPURIOUS_SLOT_ECHO_RE =
+  /^\[?(?:SEG_\d+|item\s+[\d.]+|sub-item\s+[\d.]+|term|definition)\]?\s*[:：]\s*/i;
+const PARTIAL_LIST_MARKER_ONLY_RE =
+  /^(?:[-*•·▪▫◦‣⁃]|[1-9]\d?[.)、]?|（\d*）?|\(\d*\)?)$/;
+
+export function stripSpuriousListMarker(
+  source: string,
+  translated: string,
+  isListSlot: boolean,
+  isPartialStream = false,
+): string {
+  if (!isListSlot || !translated) return translated;
+
+  const sourcePlain = source.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  const sourceHasMarker =
+    SOURCE_BULLET_PREFIX_RE.test(sourcePlain) || SOURCE_ORDINAL_PREFIX_RE.test(sourcePlain);
+  if (sourceHasMarker) return translated;
+
+  const trimmedStart = translated.trimStart();
+  if (!trimmedStart) return '';
+
+  if (isPartialStream && PARTIAL_LIST_MARKER_ONLY_RE.test(trimmedStart.trim())) {
+    return '';
+  }
+
+  let result = trimmedStart;
+  for (let pass = 0; pass < 2; pass++) {
+    if (!SPURIOUS_SLOT_ECHO_RE.test(sourcePlain)) {
+      const afterEcho = result.replace(SPURIOUS_SLOT_ECHO_RE, '');
+      if (afterEcho !== result) {
+        result = afterEcho.trimStart();
+      }
+    }
+    const afterBullet = result.replace(SPURIOUS_BULLET_PREFIX_RE, '');
+    if (afterBullet !== result) {
+      result = afterBullet.trimStart();
+      continue;
+    }
+    const afterOrdinal = result.replace(SPURIOUS_ORDINAL_PREFIX_RE, '');
+    if (afterOrdinal !== result) {
+      result = afterOrdinal.trimStart();
+    }
+  }
+
+  if (isPartialStream && PARTIAL_LIST_MARKER_ONLY_RE.test(result.trim())) {
+    return '';
+  }
+  return result;
 }
 
 const BATCH_MARKER_RE = /(?:\[\[?\s*@?FR_SEG_(\d+)@?\s*\]?\]|@@\s*FR_SEG_(\d+)\s*@@)\s*:?\s*/gi;
@@ -657,6 +719,7 @@ export async function translateTextStream(
     useCache = config.useCache,
     bypassCacheRead = false,
     cacheKey = origin,
+    isListSlot = false,
   } = options;
 
   if (detectlang(origin.replace(/[\s\u3000]/g, '')) === config.to) return origin;
@@ -709,11 +772,13 @@ export async function translateTextStream(
     const pageSummary = config.enablePageSummary ? getCurrentPageSummary() : undefined;
     let combined = '';
 
-    for (const chunk of chunks) {
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
       if (!chunk.trim()) continue;
       throwIfAborted(signal);
       const prefix = combined;
-      const chunkResult = await requestViaPort(
+      const isFirstChunk = i === 0;
+      const rawChunkResult = await requestViaPort(
         { context, origin: chunk, pageSummary },
         signal,
         timeout,
@@ -724,9 +789,13 @@ export async function translateTextStream(
           invalid: '流式翻译返回了无效的响应格式',
         },
         (chunkAccumulated) => {
-          const nextAccumulated = prefix
-            ? appendTranslatedChunk(prefix, chunkAccumulated)
+          const sanitizedChunk = isFirstChunk
+            ? stripSpuriousListMarker(origin, chunkAccumulated, isListSlot, true)
             : chunkAccumulated;
+          if (!sanitizedChunk) return;
+          const nextAccumulated = prefix
+            ? appendTranslatedChunk(prefix, sanitizedChunk)
+            : sanitizedChunk;
           streamEntry.latestAccumulated = nextAccumulated;
           for (const listener of streamEntry.listeners) {
             try {
@@ -737,6 +806,9 @@ export async function translateTextStream(
           }
         },
       );
+      const chunkResult = isFirstChunk
+        ? stripSpuriousListMarker(origin, rawChunkResult, isListSlot, false)
+        : rawChunkResult;
       if (chunkResult) {
         assertTranslationComplete(chunk, chunkResult);
         combined = appendTranslatedChunk(combined, chunkResult);
@@ -812,7 +884,14 @@ export async function translateBatch(
           const partialMap = parseBatchOutput(accumulated, true);
           for (const item of items) {
             if (!item.onChunk) continue;
-            const segText = partialMap.get(item.id);
+            const rawSegText = partialMap.get(item.id);
+            if (!rawSegText) continue;
+            const segText = stripSpuriousListMarker(
+              item.origin,
+              rawSegText,
+              Boolean(item.isListSlot),
+              true,
+            );
             if (segText && segText !== lastEmitted.get(item.id)) {
               lastEmitted.set(item.id, segText);
               try {
@@ -856,12 +935,34 @@ export async function translateBatch(
 
     const finalMap = parseBatchOutput(rawResult, false);
     const validatedMap = new Map<number, string>();
+    const hasMissingSegments = finalMap.size < items.length;
 
     for (const item of items) {
-      const segText = finalMap.get(item.id);
+      const rawSegText = finalMap.get(item.id);
+      if (!rawSegText) continue;
+      const segText = stripSpuriousListMarker(
+        item.origin,
+        rawSegText,
+        Boolean(item.isListSlot),
+        false,
+      );
       if (!segText) continue;
+
+      if (
+        hasMissingSegments &&
+        plainTextLength(segText) > Math.max(240, plainTextLength(item.origin) * 3.5) &&
+        segText.includes('\n')
+      ) {
+        continue;
+      }
+
       const normalizedItemOrigin = item.origin.replace(/\s+/g, ' ').trim();
-      if (segText === item.origin || segText === normalizedItemOrigin) continue;
+      if (segText === item.origin || segText === normalizedItemOrigin) {
+        if (item.allowIdentity && !hasMissingSegments && plainTextLength(item.origin) <= 30) {
+          validatedMap.set(item.id, segText);
+        }
+        continue;
+      }
       if (isTranslationTruncated(item.origin, segText)) continue;
 
       if (useCache) void cache.localSet(item.cacheKey, segText);

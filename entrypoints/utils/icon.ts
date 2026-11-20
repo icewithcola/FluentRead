@@ -15,7 +15,12 @@ const icon = {
 };
 
 // 插入失败提示并处理错误
-export function insertFailedTip(node: HTMLElement, errMsg: string, spinner: HTMLElement) {
+export function insertFailedTip(
+  node: HTMLElement,
+  errMsg: string,
+  spinner: HTMLElement,
+  beforeNode?: Node | null,
+) {
   spinner?.remove(); // 取消转圈动画
 
   // 创建包装元素
@@ -43,7 +48,11 @@ export function insertFailedTip(node: HTMLElement, errMsg: string, spinner: HTML
 
   // 将所有元素批量添加到 wrapper
   wrapper.append(retryElement, retryBtn, warnElement, errorTip);
-  node.appendChild(wrapper);
+  if (beforeNode && beforeNode.parentNode === node) {
+    node.insertBefore(wrapper, beforeNode);
+  } else {
+    node.appendChild(wrapper);
+  }
 }
 
 // 处理重试按钮点击事件
@@ -142,7 +151,11 @@ function createIconElement(iconContent: string): HTMLElement {
 }
 
 // 插入加载动画
-export function insertLoadingSpinner(node: HTMLElement, isCache: boolean = false): HTMLElement {
+export function insertLoadingSpinner(
+  node: HTMLElement,
+  isCache: boolean = false,
+  beforeNode?: Node | null,
+): HTMLElement {
   const spinner = document.createElement('span');
   spinner.className = 'fluent-read-loading';
   if (isCache) spinner.style.borderTop = '3px solid green'; // 存在缓存时改为绿色
@@ -158,6 +171,10 @@ export function insertLoadingSpinner(node: HTMLElement, isCache: boolean = false
       // 忽略错误，使用默认动画
     });
 
-  node.appendChild(spinner);
+  if (beforeNode && beforeNode.parentNode === node) {
+    node.insertBefore(spinner, beforeNode);
+  } else {
+    node.appendChild(spinner);
+  }
   return spinner;
 }

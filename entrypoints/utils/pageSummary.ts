@@ -2,6 +2,7 @@
 // The summary is used as context injected into translation prompts (not shown to users).
 import { config } from '@/entrypoints/utils/config';
 import { summaryMsgTemplate } from '@/entrypoints/utils/template';
+import { buildSingleItemStructuredContext } from '@/entrypoints/main/structuredGroup';
 import {
   getPageStorageItem,
   getPageStorageKeys,
@@ -285,8 +286,13 @@ export function buildPageContext(
     const section = findSectionBreadcrumb(element);
     if (section) lines.push(`Section: ${section}`);
     if (includePreceding) {
-      const preceding = findPrecedingSnippet(element);
-      if (preceding) lines.push(`Preceding text: ${preceding}`);
+      const structuredCtx = buildSingleItemStructuredContext(element);
+      if (structuredCtx) {
+        lines.push(structuredCtx);
+      } else {
+        const preceding = findPrecedingSnippet(element);
+        if (preceding) lines.push(`Preceding text: ${preceding}`);
+      }
     }
   }
 

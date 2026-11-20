@@ -2,7 +2,7 @@
   "name": "catgirl-read",
   "description": "An AI-powered open-source browser translation extension for native-like bilingual reading.",
   "private": true,
-  "version": "0.5.9",
+  "version": "0.5.10",
   "type": "module",
   "scripts": {
     "dev": "wxt",
